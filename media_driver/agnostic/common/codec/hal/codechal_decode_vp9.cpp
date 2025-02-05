@@ -35,6 +35,7 @@
 #include <fstream>
 #include "codechal_debug.h"
 #endif
+#include "mos_os_cp_interface_specific.h"
 
 CodechalDecodeVp9 :: ~CodechalDecodeVp9 ()
 {
@@ -231,6 +232,7 @@ CodechalDecodeVp9 ::CodechalDecodeVp9(
     }
 
     m_hcpInUse = true;
+    m_hwInterface = hwInterface;
 }
 
 MOS_STATUS CodechalDecodeVp9 :: ProbBufferPartialUpdatewithDrv()
@@ -239,54 +241,60 @@ MOS_STATUS CodechalDecodeVp9 :: ProbBufferPartialUpdatewithDrv()
 
     CODECHAL_DECODE_FUNCTION_ENTER;
 
-    CodechalResLock ResourceLock(m_osInterface, &m_resVp9ProbBuffer[m_frameCtxIdx]);
-    auto data = (uint8_t*)ResourceLock.Lock(CodechalResLock::writeOnly);
-    CODECHAL_DECODE_CHK_NULL_RETURN(data);
-
-    if (m_probUpdateFlags.bSegProbCopy)
+    if (m_probUpdateFlags.bSegProbCopy ||
+        m_probUpdateFlags.bProbSave ||
+        m_probUpdateFlags.bProbReset ||
+        m_probUpdateFlags.bProbRestore)
     {
-        CODECHAL_DECODE_CHK_STATUS_RETURN(MOS_SecureMemcpy(
-            (data + CODEC_VP9_SEG_PROB_OFFSET),
-            7,
-            m_probUpdateFlags.SegTreeProbs,
-            7));
-        CODECHAL_DECODE_CHK_STATUS_RETURN(MOS_SecureMemcpy(
-            (data + CODEC_VP9_SEG_PROB_OFFSET + 7),
-            3,
-            m_probUpdateFlags.SegPredProbs,
-            3));
-    }
+        CodechalResLock ResourceLock(m_osInterface, &m_resVp9ProbBuffer[m_frameCtxIdx]);
+        auto            data = (uint8_t *)ResourceLock.Lock(CodechalResLock::writeOnly);
+        CODECHAL_DECODE_CHK_NULL_RETURN(data);
 
-    if (m_probUpdateFlags.bProbSave)
-    {
-        CODECHAL_DECODE_CHK_STATUS_RETURN(MOS_SecureMemcpy(
-            m_interProbSaved,
-            CODECHAL_VP9_INTER_PROB_SIZE,
-            data + CODEC_VP9_INTER_PROB_OFFSET,
-            CODECHAL_VP9_INTER_PROB_SIZE));
-    }
-
-    if (m_probUpdateFlags.bProbReset)
-    {
-        if (m_probUpdateFlags.bResetFull)
+        if (m_probUpdateFlags.bSegProbCopy)
         {
-            CODECHAL_DECODE_CHK_STATUS_RETURN(ContextBufferInit(
-                data, (m_probUpdateFlags.bResetKeyDefault ? true : false)));
+            CODECHAL_DECODE_CHK_STATUS_RETURN(MOS_SecureMemcpy(
+                (data + CODEC_VP9_SEG_PROB_OFFSET),
+                7,
+                m_probUpdateFlags.SegTreeProbs,
+                7));
+            CODECHAL_DECODE_CHK_STATUS_RETURN(MOS_SecureMemcpy(
+                (data + CODEC_VP9_SEG_PROB_OFFSET + 7),
+                3,
+                m_probUpdateFlags.SegPredProbs,
+                3));
         }
-        else
-        {
-            CODECHAL_DECODE_CHK_STATUS_RETURN(CtxBufDiffInit(
-                data, (m_probUpdateFlags.bResetKeyDefault ? true : false)));
-        }
-    }
 
-    if (m_probUpdateFlags.bProbRestore)
-    {
-        CODECHAL_DECODE_CHK_STATUS_RETURN(MOS_SecureMemcpy(
-            data + CODEC_VP9_INTER_PROB_OFFSET,
-            CODECHAL_VP9_INTER_PROB_SIZE,
-            m_interProbSaved,
-            CODECHAL_VP9_INTER_PROB_SIZE));
+        if (m_probUpdateFlags.bProbSave)
+        {
+            CODECHAL_DECODE_CHK_STATUS_RETURN(MOS_SecureMemcpy(
+                m_interProbSaved,
+                CODECHAL_VP9_INTER_PROB_SIZE,
+                data + CODEC_VP9_INTER_PROB_OFFSET,
+                CODECHAL_VP9_INTER_PROB_SIZE));
+        }
+
+        if (m_probUpdateFlags.bProbReset)
+        {
+            if (m_probUpdateFlags.bResetFull)
+            {
+                CODECHAL_DECODE_CHK_STATUS_RETURN(ContextBufferInit(
+                    data, (m_probUpdateFlags.bResetKeyDefault ? true : false)));
+            }
+            else
+            {
+                CODECHAL_DECODE_CHK_STATUS_RETURN(CtxBufDiffInit(
+                    data, (m_probUpdateFlags.bResetKeyDefault ? true : false)));
+            }
+        }
+
+        if (m_probUpdateFlags.bProbRestore)
+        {
+            CODECHAL_DECODE_CHK_STATUS_RETURN(MOS_SecureMemcpy(
+                data + CODEC_VP9_INTER_PROB_OFFSET,
+                CODECHAL_VP9_INTER_PROB_SIZE,
+                m_interProbSaved,
+                CODECHAL_VP9_INTER_PROB_SIZE));
+        }
     }
 
     return eStatus;
@@ -1186,7 +1194,7 @@ MOS_STATUS CodechalDecodeVp9::SetFrameStates ()
     CODECHAL_DEBUG_TOOL(
         CODECHAL_DECODE_CHK_STATUS_RETURN(m_debugInterface->DumpBuffer(
             m_copyDataBufferInUse ? &m_resCopyDataBuffer : &m_resDataBuffer,
-            CodechalDbgAttr::attrBitstream,
+            CodechalDbgAttr::attrDecodeBitstream,
             "_DEC",
             m_copyDataBufferInUse ? m_copyDataBufferSize : m_dataSize,
             m_copyDataBufferInUse ? 0 : m_dataOffset,
@@ -1287,6 +1295,9 @@ MOS_STATUS CodechalDecodeVp9::SetFrameStates ()
 
         CODECHAL_DECODE_CHK_STATUS_RETURN(DumpDecodePicParams(
             m_vp9PicParams));
+
+        CODECHAL_DECODE_CHK_STATUS_RETURN(DumpDecodeSliceParams(
+            m_vp9SliceParams));
 
         if (m_vp9SegmentParams) {
             CODECHAL_DECODE_CHK_STATUS_RETURN(DumpDecodeSegmentParams(
@@ -1565,6 +1576,49 @@ MOS_STATUS CodechalDecodeVp9 :: InitPicStateMhwParams()
 
     m_picMhwParams.Vp9SegmentState->Mode                = m_mode;
     m_picMhwParams.Vp9SegmentState->pVp9SegmentParams   = m_vp9SegmentParams;
+
+    CODECHAL_DEBUG_TOOL(
+        if (m_vp9PicParams->PicFlags.fields.frame_type == CODEC_VP9_INTER_FRAME)
+        {
+            for (uint16_t n = 0; n < CODECHAL_MAX_CUR_NUM_REF_FRAME_VP9; n++)
+            {
+                if (m_picMhwParams.PipeBufAddrParams->presReferences[n])
+                {
+                    MOS_SURFACE dstSurface;
+                    MOS_ZeroMemory(&dstSurface, sizeof(MOS_SURFACE));
+                    dstSurface.OsResource = *(m_picMhwParams.PipeBufAddrParams->presReferences[n]);
+                    CODECHAL_DECODE_CHK_STATUS_RETURN(CodecHalGetResourceInfo(
+                        m_osInterface,
+                        &dstSurface));
+
+                    m_debugInterface->m_refIndex = n;
+                    std::string refSurfName      = "RefSurf[" + std::to_string(static_cast<uint32_t>(m_debugInterface->m_refIndex)) + "]";
+                    CODECHAL_DECODE_CHK_STATUS_RETURN(m_debugInterface->DumpYUVSurface(
+                        &dstSurface,
+                        CodechalDbgAttr::attrDecodeReferenceSurfaces,
+                        refSurfName.c_str()));
+                }
+            }
+        }
+
+        if (m_picMhwParams.PipeBufAddrParams->presColMvTempBuffer[0])
+        {
+            CODECHAL_DECODE_CHK_STATUS_RETURN(m_debugInterface->DumpBuffer(
+                m_picMhwParams.PipeBufAddrParams->presColMvTempBuffer[0],
+                CodechalDbgAttr::attrMvData,
+                "DEC_Col_MV_",
+                m_mvBufferSize));
+        }
+
+        if (m_picMhwParams.PipeBufAddrParams->presCurMvTempBuffer)
+        {
+            CODECHAL_DECODE_CHK_STATUS_RETURN(m_debugInterface->DumpBuffer(
+                m_picMhwParams.PipeBufAddrParams->presCurMvTempBuffer,
+                CodechalDbgAttr::attrMvData,
+                "DEC_Cur_MV_",
+                m_mvBufferSize));
+        };
+    );
 
     return eStatus;
 }
@@ -2094,6 +2148,28 @@ MOS_STATUS CodechalDecodeVp9::DumpDecodePicParams(
     std::ofstream ofs(fileName, std::ios::out);
     ofs << oss.str();
     ofs.close();
+
+    return MOS_STATUS_SUCCESS;
+}
+
+MOS_STATUS CodechalDecodeVp9::DumpDecodeSliceParams(CODEC_VP9_SLICE_PARAMS *slcParams)
+{
+    CODECHAL_DEBUG_FUNCTION_ENTER;
+
+    if (slcParams == nullptr)
+    {
+        return MOS_STATUS_SUCCESS;
+    }
+
+    if (m_debugInterface->DumpIsEnabled(CodechalDbgAttr::attrSlcParams))
+    {
+        const char *fileName = m_debugInterface->CreateFileName(
+            "_DEC",
+            CodechalDbgBufferType::bufSlcParams,
+            CodechalDbgExtType::txt);
+
+        DumpDecodeVp9SliceParams(slcParams, fileName);
+    }
 
     return MOS_STATUS_SUCCESS;
 }

@@ -25,7 +25,7 @@
 //! \details  Linux-specific Render Engine state heap management interfaces
 //!
 #include "mos_os.h"
-#include "renderhal.h"
+#include "renderhal_legacy.h"
 
 void RenderHal_SetupPrologParams(
     PRENDERHAL_INTERFACE              renderHal,
@@ -176,6 +176,13 @@ MOS_STATUS RenderHal_SendSurfaces_PatchList(
     pOsInterface        = pRenderHal->pOsInterface;
     iSurfacesPerBT      = pRenderHal->StateHeapSettings.iSurfacesPerBT;
 
+    if (pRenderHal->isBindlessHeapInUse)
+    {
+        bool bNeedNullPatch = MEDIA_IS_SKU(pOsInterface->pfnGetSkuTable(pOsInterface), FtrMediaPatchless);
+        MHW_RENDERHAL_CHK_STATUS_RETURN(pRenderHal->pfnSendBindlessSurfaceStates(pRenderHal, bNeedNullPatch));
+        return MOS_STATUS_SUCCESS;
+    }
+
     // Get offset and size of indirect state in command buffer
     MHW_RENDERHAL_CHK_STATUS(pOsInterface->pfnGetIndirectState(pOsInterface, &IndirectStateBase, &IndirectStateSize));
     pIndirectState = (uint8_t*)pCmdBuffer->pCmdBase + IndirectStateBase;
@@ -242,6 +249,7 @@ MOS_STATUS RenderHal_SetSurfaceStateToken(
 
     SURFACE_STATE_TOKEN_COMMON *pTokenState = (SURFACE_STATE_TOKEN_COMMON*)pSurfaceStateToken;
     PMOS_INTERFACE pOsInterface = pRenderHal->pOsInterface;
+    MHW_MI_CHK_NULL(pOsInterface);
     PMOS_RESOURCE  pOsResource  = &(pParams->pOsSurface->OsResource);
 
     int32_t  iAllocationIndex =  pOsInterface->pfnGetResourceAllocationIndex(pOsInterface, pOsResource);
@@ -439,6 +447,19 @@ MOS_STATUS RenderHal_AddDebugControl(
     MHW_RENDERHAL_UNUSED(pRenderHal);
     MHW_RENDERHAL_UNUSED(pCmdBuffer);
     return MOS_STATUS_SUCCESS;
+}
+
+//!
+//! \brief    Init Special Interface
+//! \details  Initializes RenderHal Interface structure, responsible for HW
+//!           abstraction of HW Rendering Engine for CM(MDF) and VP.
+//! \param    PRENDERHAL_INTERFACE pRenderHal
+//!           [in] Pointer to RenderHal Interface Structure
+//!
+void RenderHal_InitInterfaceEx_Legacy(PRENDERHAL_INTERFACE_LEGACY pRenderHal)
+{
+    RenderHal_InitInterfaceEx(pRenderHal);
+    return;
 }
 
 //!

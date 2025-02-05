@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2020-2021, Intel Corporation
+* Copyright (c) 2020-2023, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -78,15 +78,15 @@
 #define AOMMAX(x, y) (((x) > (y)) ? (x) : (y))
 #define CAT2SHORTS(low, high) (((low) & 0xffff) | (((high) << 16) & 0xffff0000) )
 
-static const uint32_t av1MinTileWidth       = 64;                                      // Min tile width
-static const uint32_t av1MinTileHeight      = 64;                                      // Min tile height
+static const uint32_t av1MinTileWidth       = 64;                                       // Min tile width
+static const uint32_t av1MinTileHeight      = 64;                                       // Min tile height
 static const uint32_t av1MaxTileWidth       = 4096;                                     // Max tile width
-static const uint32_t av1MaxTileHeight      = 2304;                                     // Max tile height
+static const uint32_t av1MaxTileArea        = 4096 * 2304;                              // Max tile height
 static const uint32_t av1SuperBlockWidth    = 64;                                       // Super block width
 static const uint32_t av1SuperBlockHeight   = 64;                                       // Super block height
 static const uint32_t av1MinBlockWidth      = 8;                                        // Min block width
 static const uint32_t av1MinBlockHeight     = 8;                                        // Min block height
-static const uint32_t av1MaxTileNum         = 512;                                      // Max tile number per frame
+static const uint32_t av1MaxTileNum         = 4096;                                     // Max tile number per frame
 static const uint32_t av1MaxTileGroupNum    = 4096;                                     // Max tile group number per frame
 static const uint32_t av1MaxSegments        = 8;                                        // Max Segment number for one frame
 static const uint32_t av1MaxQindex          = 255;                                      // Max QIndex number
@@ -179,15 +179,14 @@ enum CodecAv1ReferenceMode
 
 //!
 //! \enum CodecAv1TxType
-//! AV1 transformation type, defined in AOM
+//! AV1 transformation type, defined in AOM errata.1
 //!
 enum class CodecAv1TxType
 {
-    ONLY_4X4    = 0,
-    ALLOW_8X8   = 1,
-    ALLOW_16X16 = 2,
-    ALLOW_32X32 = 3,
-    SELECTABLE  = 4,
+    ONLY_4X4        = 0,    // use only 4x4 transform
+    TX_MODE_LARGEST = 1,    // transform size is the largest possible for pu size
+    TX_MODE_SELECT  = 2,    // transform specified for each block
+    TX_MODES,
 };
 
 //!
@@ -339,7 +338,8 @@ enum Av1SurfaceId
     av1AltRef2      = 12,   //!< Altref2 frame
     av1AltRef       = 13,    //!< Altref frame
     intrabcDecodedFrame = 14,   //!< IntraBC Decoded Frame
-    av1CdefPixelsStreamout = 15 //!< Cdef pixels streamout (encoder only)
+    av1CdefPixelsStreamout = 15, //!< Cdef pixels streamout (encoder only)
+    av1SurfaceNums               //!< max surface ids
 };
 
 //CDF tables for Intra

@@ -48,15 +48,18 @@ public:
     {
         DECODE_FUNC_CALL();
 
-        for (auto& surface : m_activeSurfaces)
+        if (m_allocator != nullptr)
         {
-            m_allocator->Destroy(surface.second);
-        }
-        m_activeSurfaces.clear();
+            for (auto &surface : m_activeSurfaces)
+            {
+                m_allocator->Destroy(surface.second);
+            }
+            m_activeSurfaces.clear();
 
-        for (auto& surface : m_aviableSurfaces)
-        {
-            m_allocator->Destroy(surface);
+            for (auto &surface : m_aviableSurfaces)
+            {
+                m_allocator->Destroy(surface);
+            }
         }
         m_aviableSurfaces.clear();
     }
@@ -124,12 +127,12 @@ public:
             auto iter = m_aviableSurfaces.begin();
             m_currentSurface = *iter;
             m_aviableSurfaces.erase(iter);
-            m_allocator->Resize(m_currentSurface,
+            DECODE_CHK_STATUS(m_allocator->Resize(m_currentSurface,
                                 dstSurface->dwWidth,
                                 MOS_ALIGN_CEIL(dstSurface->dwHeight, 8),
                                 accessReq,
                                 false,
-                                "Internal target surface");
+                                "Internal target surface"));
         }
 
         DECODE_CHK_NULL(m_currentSurface);
@@ -222,11 +225,13 @@ protected:
         return false;
     }
 
- private:
+private:
     std::map<uint32_t, PMOS_SURFACE> m_activeSurfaces;           //!< Active surfaces corresponding to current reference frame list
     std::vector<PMOS_SURFACE>        m_aviableSurfaces;          //!< Surfaces in idle
     PMOS_SURFACE                     m_currentSurface = nullptr; //!< Point to surface of current picture
     DecodeAllocator*                 m_allocator = nullptr;
+
+MEDIA_CLASS_DEFINE_END(decode__InternalTargets)
 };
 
 }  // namespace decode

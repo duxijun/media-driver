@@ -20,7 +20,7 @@
 * OTHER DEALINGS IN THE SOFTWARE.
 */
 //!
-//! \file      codechal_decode_avc_g11.cpp
+//! \file      codechal_decode_avc_g12.cpp
 //! \brief     This modules implements Render interface layer for AVC decoding to be used on all operating systems/DDIs, across CODECHAL components.
 //!
 
@@ -31,6 +31,7 @@
 #include "mhw_vdbox_mfx_g12_X.h"
 #include "codechal_mmc_decode_avc_g12.h"
 #include "hal_oca_interface.h"
+#include "mos_os_cp_interface_specific.h"
 
 MOS_STATUS CodechalDecodeAvcG12::AllocateStandard(
     CodechalSetting *          settings)
@@ -119,6 +120,12 @@ MOS_STATUS CodechalDecodeAvcG12::InitMmcState()
     m_mmc = MOS_New(CodechalMmcDecodeAvcG12, m_hwInterface, this);
     CODECHAL_DECODE_CHK_NULL_RETURN(m_mmc);
 #endif
+
+    if (m_osInterface->pfnIsMismatchOrderProgrammingSupported())
+    {
+        m_mmc->SetMmcDisabled();
+    }
+
     return MOS_STATUS_SUCCESS;
 }
 
@@ -221,6 +228,8 @@ MOS_STATUS CodechalDecodeAvcG12::SetFrameStates()
 
     CODECHAL_DECODE_CHK_STATUS_RETURN(CodechalDecodeAvc::SetFrameStates());
 
+    CODECHAL_DECODE_CHK_STATUS_RETURN(ErrorDetectAndConceal());
+
     if (MOS_VE_SUPPORTED(m_osInterface) && !MOS_VE_CTXBASEDSCHEDULING_SUPPORTED(m_osInterface))
     {
         MOS_VIRTUALENGINE_SET_PARAMS vesetParams;
@@ -234,6 +243,28 @@ MOS_STATUS CodechalDecodeAvcG12::SetFrameStates()
         vesetParams.bNeedSyncWithPrevious = true;
         vesetParams.bSameEngineAsLastSubmission = false;
         CODECHAL_DECODE_CHK_STATUS_RETURN(CodecHalDecodeSinglePipeVE_SetHintParams(m_veState, &vesetParams));
+    }
+
+    return eStatus;
+}
+
+MOS_STATUS CodechalDecodeAvcG12::ErrorDetectAndConceal()
+{
+    MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
+
+#ifdef _DECODE_PROCESSING_SUPPORTED
+    // Skip check for sfc downsampling cases.
+    if (m_sfcState->m_sfcPipeOut  == true)
+    {
+        return eStatus;
+    }
+#endif
+
+    if ((uint32_t)(m_destSurface.dwWidth * m_destSurface.dwHeight) < (m_width * m_height))
+    {
+        // Return an error when the output size is insufficient for AVC decoding
+        CODECHAL_DECODE_ASSERTMESSAGE("Incorrect decode output allocation.")
+        return MOS_STATUS_INVALID_PARAMETER;
     }
 
     return eStatus;
@@ -277,8 +308,10 @@ MOS_STATUS CodechalDecodeAvcG12::DecodeStateLevel()
     CODECHAL_DECODE_CHK_STATUS_RETURN(m_osInterface->pfnGetCommandBuffer(m_osInterface, &cmdBuffer, 0));
 
     auto mmioRegisters = m_hwInterface->GetMfxInterface()->GetMmioRegisters(m_vdboxIndex);
-    HalOcaInterface::On1stLevelBBStart(cmdBuffer, *m_osInterface->pOsContext, m_osInterface->CurrentGpuContextHandle, *m_miInterface, *mmioRegisters);
 
+    HalOcaInterface::On1stLevelBBStart(cmdBuffer, *m_osInterface->pOsContext, m_osInterface->CurrentGpuContextHandle, *m_miInterface, *mmioRegisters);
+    HalOcaInterface::OnDispatch(cmdBuffer, *m_osInterface, *m_miInterface, *m_miInterface->GetMmioRegisters());
+    
     MHW_MI_FORCE_WAKEUP_PARAMS forceWakeupParams;
     MOS_ZeroMemory(&forceWakeupParams, sizeof(MHW_MI_FORCE_WAKEUP_PARAMS));
     forceWakeupParams.bMFXPowerWellControl = true;
@@ -418,8 +451,10 @@ MOS_STATUS CodechalDecodeAvcG12::DecodePrimitiveLevel()
         m_debugInterface->DetectCorruptionHw(m_hwInterface, &m_frameCountTypeBuf, curIdx, frameCrcOffset, vSemaResource, &cmdBuffer, m_frameNum);
     }
 #endif
-
-    CODECHAL_DECODE_CHK_STATUS_RETURN(m_miInterface->AddMiBatchBufferEnd(&cmdBuffer, nullptr));
+    if (!m_osInterface->pfnIsMismatchOrderProgrammingSupported())
+    {
+        CODECHAL_DECODE_CHK_STATUS_RETURN(m_miInterface->AddMiBatchBufferEnd(&cmdBuffer, nullptr));
+    }
 
     m_osInterface->pfnReturnCommandBuffer(m_osInterface, &cmdBuffer, 0);
 
@@ -443,7 +478,7 @@ MOS_STATUS CodechalDecodeAvcG12::DecodePrimitiveLevel()
         CODECHAL_DECODE_CHK_STATUS_RETURN(m_debugInterface->DumpCmdBuffer(
             &cmdBuffer,
             CODECHAL_NUM_MEDIA_STATES,
-            "_DEC"));
+            "_AVC_DECODE_0"));
 
     //CODECHAL_DECODE_CHK_STATUS_RETURN(CodecHal_DbgReplaceAllCommands(
     //    m_debugInterface,
@@ -455,6 +490,7 @@ MOS_STATUS CodechalDecodeAvcG12::DecodePrimitiveLevel()
         CodecHalDecodeSinglePipeVE_PopulateHintParams(m_veState, &cmdBuffer, true);
     }
 
+    HalOcaInterface::DumpCodechalParam(cmdBuffer, (MOS_CONTEXT_HANDLE)m_osInterface->pOsContext, m_pCodechalOcaDumper, CODECHAL_AVC);
     HalOcaInterface::On1stLevelBBEnd(cmdBuffer, *m_osInterface);
 
     CODECHAL_DECODE_CHK_STATUS_RETURN(m_osInterface->pfnSubmitCommandBuffer(m_osInterface, &cmdBuffer, m_videoContextUsesNullHw));
@@ -548,7 +584,7 @@ CodechalDecodeAvcG12::CodechalDecodeAvcG12(
 
     CODECHAL_DECODE_CHK_NULL_NO_STATUS_RETURN(m_osInterface);
 
-    Mos_CheckVirtualEngineSupported(m_osInterface, true, true);
+    m_osInterface->pfnVirtualEngineSupported(m_osInterface, true, true);
 }
 
 MOS_STATUS CodechalDecodeAvcG12::FormatAvcMonoPicture(PMOS_SURFACE surface)

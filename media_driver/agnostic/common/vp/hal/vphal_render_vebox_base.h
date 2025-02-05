@@ -28,7 +28,7 @@
 #define __VPHAL_RENDER_VEBOX_BASE_H__
 
 #include "mos_os.h"
-#include "renderhal.h"
+#include "renderhal_legacy.h"
 #include "mhw_vebox.h"
 #include "vphal.h"
 #include "vphal_render_renderstate.h"
@@ -36,6 +36,7 @@
 #include "vphal_render_vebox_iecp.h"
 #include "vphal_render_sfc_base.h"
 #include "vphal_render_vebox_denoise.h"
+#include "vp_pipeline_common.h"
 
 #define VPHAL_MAX_NUM_FFDI_SURFACES     4                                       //!< 2 for ADI plus additional 2 for parallel execution on HSW+
 #define VPHAL_NUM_FFDN_SURFACES         2                                       //!< Number of FFDN surfaces
@@ -63,6 +64,7 @@
 #define NOISE_LOWTEMPORALPIXELDIFF_THRESHOLD_DEFAULT    6
 #define NOISE_TEMPORALPIXELDIFF_THRESHOLD_DEFAULT       12
 #define NOISE_SUMABSTEMPORALDIFF_THRESHOLD_DEFAULT      128
+#define RESOLUTION_THRESHOLD                            2073600                  //!< The size of 1080P
 
 //!
 //! \brief Spatial Denoise Definitions
@@ -452,16 +454,6 @@ struct VEBOX_SPATIAL_ATTRIBUTES_CONFIGURATION
 };
 
 //!
-//! \brief Enumeration for the user feature key "Bypass Composition" values
-//!
-typedef enum _VPHAL_COMP_BYPASS_MODE
-{
-    VPHAL_COMP_BYPASS_NOT_SET  = 0xffffffff,
-    VPHAL_COMP_BYPASS_DISABLED = 0x0,
-    VPHAL_COMP_BYPASS_ENABLED  = 0x1
-} VPHAL_COMP_BYPASS_MODE, *PVPHAL_COMP_BYPASS_MODE;
-
-//!
 //! \brief Kernel IDs
 //!
 typedef enum _VPHAL_VEBOX_KERNELID
@@ -639,6 +631,7 @@ public:
                                             bTopField      = false;
                                             bBeCsc         = false;
                                             bFeCsc         = false;
+                                            bCcmCsc        = false;
                                             bVeboxBypass   = false;
                                             b60fpsDi       = false;
                                             bQueryVariance = false;
@@ -694,8 +687,8 @@ public:
 
                                             bHdr3DLut            = false;
                                             bUseVEHdrSfc         = false;
-                                            uiMaxDisplayLum      = 4000;
-                                            uiMaxContentLevelLum = 1000;
+                                            uiMaxDisplayLum      = 800;
+                                            uiMaxContentLevelLum = 4000;
                                             hdrMode              = VPHAL_HDR_MODE_NONE;
 
                                             m_pVeboxStateParams  = nullptr;
@@ -733,6 +726,7 @@ public:
     bool                                bTopField;
     bool                                bBeCsc;
     bool                                bFeCsc;
+    bool                                bCcmCsc;
     bool                                bVeboxBypass;
     bool                                b60fpsDi;
     bool                                bQueryVariance;
@@ -1256,7 +1250,12 @@ public:
 
     virtual bool IsIECPEnabled()
     {
-        return GetLastExecRenderData()->bIECP;
+        PVPHAL_VEBOX_RENDER_DATA pRenderData = GetLastExecRenderData();
+        VPHAL_RENDER_CHK_NULL_NO_STATUS(pRenderData);
+
+        return pRenderData->bIECP;
+    finish:
+        return false;
     }
     virtual bool IsQueryVarianceEnabled() {return false;}
 
@@ -1288,6 +1287,11 @@ protected:
     //!
     virtual MOS_STATUS VeboxSetDNDIParams(
         PVPHAL_SURFACE              pSrcSurface);
+
+    virtual bool IsDnDisabled()
+    {
+        return false;
+    }
 
     //!
     //! \brief    Vebox Set FMD parameter

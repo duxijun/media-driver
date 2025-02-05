@@ -18,6 +18,8 @@
 # ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 # OTHER DEALINGS IN THE SOFTWARE.
 
+option (ENABLE_XE_KMD "Enable Linux Xe KMD header files" ON)
+
 # global flag for encode AVC_VME/HEVC_VME/MPEG2/VP8
 bs_set_if_undefined(Encode_VME_Supported "yes")
 # global flag for encode AVC_VDENC/HEVC_VDENC/VP9_VDENC/JPEG
@@ -35,7 +37,6 @@ if(NOT ENABLE_KERNELS OR NOT ENABLE_NONFREE_KERNELS)
     bs_set_if_undefined(HEVC_Encode_VME_Supported "no")
     bs_set_if_undefined(MPEG2_Encode_VME_Supported "no")
     bs_set_if_undefined(CMRT_HEVC_ENC_FEI_Supported "no")
-    bs_set_if_undefined(MMC_Supported "no")
     bs_set_if_undefined(VC1_Decode_Supported "no")
     bs_set_if_undefined(Decode_Processing_Supported "no")
     bs_set_if_undefined(Kernel_Auto_Denoise_Supported "no")
@@ -46,7 +47,6 @@ else()
     bs_set_if_undefined(HEVC_Encode_VME_Supported "${Encode_VME_Supported}")
     bs_set_if_undefined(MPEG2_Encode_VME_Supported "${Encode_VME_Supported}")
     bs_set_if_undefined(CMRT_HEVC_ENC_FEI_Supported "yes")
-    bs_set_if_undefined(MMC_Supported "yes")
     bs_set_if_undefined(VC1_Decode_Supported "yes")
     bs_set_if_undefined(Decode_Processing_Supported "yes")
     bs_set_if_undefined(Kernel_Auto_Denoise_Supported "yes")
@@ -54,6 +54,7 @@ else()
 endif()
 
 # features are always able to open
+bs_set_if_undefined(VVC_Decode_Supported "yes")
 bs_set_if_undefined(AV1_Decode_Supported "yes")
 bs_set_if_undefined(AVC_Decode_Supported "yes")
 bs_set_if_undefined(HEVC_Decode_Supported "yes")
@@ -64,11 +65,13 @@ bs_set_if_undefined(VP9_Decode_Supported "yes")
 bs_set_if_undefined(VP_SFC_Supported "yes")
 bs_set_if_undefined(Common_Encode_Supported "yes")
 bs_set_if_undefined(Media_Scalability_Supported "yes")
+bs_set_if_undefined(MMC_Supported "yes")
 
 # features controlled by global flag Encode_VDEnc_Supported
 bs_set_if_undefined(AVC_Encode_VDEnc_Supported "${Encode_VDEnc_Supported}")
 bs_set_if_undefined(HEVC_Encode_VDEnc_Supported "${Encode_VDEnc_Supported}")
 bs_set_if_undefined(VP9_Encode_VDEnc_Supported "${Encode_VDEnc_Supported}")
+bs_set_if_undefined(AV1_Encode_VDEnc_Supported "${Encode_VDEnc_Supported}")
 bs_set_if_undefined(JPEG_Encode_Supported "${Encode_VDEnc_Supported}")
 
 if(${Common_Encode_Supported} STREQUAL "yes")
@@ -131,12 +134,20 @@ if(${VP9_Encode_VDEnc_Supported} STREQUAL "yes")
     add_definitions(-D_VP9_ENCODE_VDENC_SUPPORTED)
 endif()
 
+if(${AV1_Encode_VDEnc_Supported} STREQUAL "yes")
+    add_definitions(-D_AV1_ENCODE_VDENC_SUPPORTED)
+endif()
+
 if(${VP9_Decode_Supported} STREQUAL "yes")
     add_definitions(-D_VP9_DECODE_SUPPORTED)
 endif()
 
 if(${AV1_Decode_Supported} STREQUAL "yes")
     add_definitions(-D_AV1_DECODE_SUPPORTED)
+endif()
+
+if(${VVC_Decode_Supported} STREQUAL "yes")
+    add_definitions(-D_VVC_DECODE_SUPPORTED)
 endif()
 
 if(${CMRT_HEVC_ENC_FEI_Supported} STREQUAL "yes")
@@ -163,12 +174,26 @@ else()
     add_definitions(-D__VPHAL_SFC_SUPPORTED=0)
 endif()
 
+bs_set_if_undefined(CLASS_TRACE 0)
+add_definitions(-DCLASS_TRACE=${CLASS_TRACE})
+
 if(ENABLE_KERNELS)
     add_definitions(-DENABLE_KERNELS)
+endif()
+
+if(BUILD_KERNELS)
+    add_definitions(-DBUILD_KERNELS)
 endif()
 
 if(NOT ENABLE_NONFREE_KERNELS)
     add_definitions(-D_FULL_OPEN_SOURCE)
 endif()
+
+if(ENABLE_XE_KMD)
+    message("New XE Kmd support has been enabled")
+    add_definitions(-DENABLE_XE_KMD)
+endif()
+
+add_definitions(-D_MANUAL_SOFTLET_)
 
 include(${MEDIA_EXT_CMAKE}/ext/linux/media_feature_flags_linux_ext.cmake OPTIONAL)

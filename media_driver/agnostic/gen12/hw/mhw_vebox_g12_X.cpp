@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2015-2021, Intel Corporation
+* Copyright (c) 2015-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -28,10 +28,9 @@
 
 #include "mhw_vebox_g12_X.h"
 #include "mos_solo_generic.h"
-#include "media_user_settings_mgr_g12.h"
 #include "mhw_mi_g12_X.h"
 #include "hal_oca_interface.h"
-
+#include "mhw_mi_itf.h"
 
 // H2S Manual Mode Coef
 static const uint16_t g_Hdr_ColorCorrect_EOTF_SMPTE_ST2084_Input_g12[HDR_OETF_1DLUT_POINT_NUMBER] =
@@ -688,6 +687,7 @@ MOS_STATUS MhwVeboxInterfaceG12::setVeboxPrologCmd(
 {
     MOS_STATUS                            eStatus = MOS_STATUS_SUCCESS;
     uint64_t                              auxTableBaseAddr = 0;
+    std::shared_ptr<mhw::mi::Itf>         miItf = nullptr;
 
     MHW_RENDERHAL_CHK_NULL(mhwMiInterface);
     MHW_RENDERHAL_CHK_NULL(cmdBuffer);
@@ -697,16 +697,34 @@ MOS_STATUS MhwVeboxInterfaceG12::setVeboxPrologCmd(
 
     if (auxTableBaseAddr)
     {
-        MHW_MI_LOAD_REGISTER_IMM_PARAMS lriParams;
-        MOS_ZeroMemory(&lriParams, sizeof(MHW_MI_LOAD_REGISTER_IMM_PARAMS));
+        miItf = std::static_pointer_cast<mhw::mi::Itf>(mhwMiInterface->GetNewMiInterface());
 
-        lriParams.dwRegister = MhwMiInterfaceG12::m_mmioVe0AuxTableBaseLow;
-        lriParams.dwData = (auxTableBaseAddr & 0xffffffff);
-        MHW_RENDERHAL_CHK_STATUS(mhwMiInterface->AddMiLoadRegisterImmCmd(cmdBuffer, &lriParams));
+        if (miItf)
+        {
+            auto &params             = miItf->MHW_GETPAR_F(MI_LOAD_REGISTER_IMM)();
+            params                   = {};
+            params.dwRegister        = miItf->GetMmioInterfaces(mhw::mi::MHW_MMIO_VE0_AUX_TABLE_BASE_LOW);//mhw::mi::m_mmioVe0AuxTableBaseLow;
+            params.dwData            = (auxTableBaseAddr & 0xffffffff);
+            MHW_RENDERHAL_CHK_STATUS(miItf->MHW_ADDCMD_F(MI_LOAD_REGISTER_IMM)(cmdBuffer));
 
-        lriParams.dwRegister = MhwMiInterfaceG12::m_mmioVe0AuxTableBaseHigh;
-        lriParams.dwData = ((auxTableBaseAddr >> 32) & 0xffffffff);
-        MHW_RENDERHAL_CHK_STATUS(mhwMiInterface->AddMiLoadRegisterImmCmd(cmdBuffer, &lriParams));
+            params.dwRegister        = miItf->GetMmioInterfaces(mhw::mi::MHW_MMIO_VE0_AUX_TABLE_BASE_HIGH); //mhw::mi::m_mmioVe0AuxTableBaseHigh;
+            params.dwData            = ((auxTableBaseAddr >> 32) & 0xffffffff);
+            MHW_RENDERHAL_CHK_STATUS(miItf->MHW_ADDCMD_F(MI_LOAD_REGISTER_IMM)(cmdBuffer));
+        }
+        else
+        {
+            MHW_MI_LOAD_REGISTER_IMM_PARAMS lriParams;
+            MOS_ZeroMemory(&lriParams, sizeof(MHW_MI_LOAD_REGISTER_IMM_PARAMS));
+
+            lriParams.dwRegister = MhwMiInterfaceG12::m_mmioVe0AuxTableBaseLow;
+            lriParams.dwData = (auxTableBaseAddr & 0xffffffff);
+            MHW_RENDERHAL_CHK_STATUS(mhwMiInterface->AddMiLoadRegisterImmCmd(cmdBuffer, &lriParams));
+
+            lriParams.dwRegister = MhwMiInterfaceG12::m_mmioVe0AuxTableBaseHigh;
+            lriParams.dwData = ((auxTableBaseAddr >> 32) & 0xffffffff);
+            MHW_RENDERHAL_CHK_STATUS(mhwMiInterface->AddMiLoadRegisterImmCmd(cmdBuffer, &lriParams));
+        }
+
     }
 
 finish:
@@ -801,7 +819,7 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxState(
             pCmdBuffer,
             &ResourceParams));
 
-        HalOcaInterface::OnIndirectState(*pCmdBuffer, *pOsContext, ResourceParams.presResource, ResourceParams.dwOffset, false, m_veboxSettings.uiDndiStateSize);
+        HalOcaInterface::OnIndirectState(*pCmdBuffer, (MOS_CONTEXT_HANDLE)pOsContext, ResourceParams.presResource, ResourceParams.dwOffset, false, m_veboxSettings.uiDndiStateSize);
 
         MOS_ZeroMemory(&ResourceParams, sizeof(ResourceParams));
         if (bCmBuffer)
@@ -824,7 +842,7 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxState(
             pCmdBuffer,
             &ResourceParams));
 
-        HalOcaInterface::OnIndirectState(*pCmdBuffer, *pOsContext, ResourceParams.presResource, ResourceParams.dwOffset, false, m_veboxSettings.uiIecpStateSize);
+        HalOcaInterface::OnIndirectState(*pCmdBuffer, (MOS_CONTEXT_HANDLE)pOsContext, ResourceParams.presResource, ResourceParams.dwOffset, false, m_veboxSettings.uiIecpStateSize);
 
         // Gamut Expansion, HDR and Forward Gamma Correction are mutually exclusive.
         if (pVeboxMode && pVeboxMode->Hdr1DLutEnable)
@@ -851,7 +869,7 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxState(
                 pCmdBuffer,
                 &ResourceParams));
 
-            HalOcaInterface::OnIndirectState(*pCmdBuffer, *pOsContext, ResourceParams.presResource, ResourceParams.dwOffset, false, m_veboxSettings.uiHdrStateSize);
+            HalOcaInterface::OnIndirectState(*pCmdBuffer, (MOS_CONTEXT_HANDLE)pOsContext, ResourceParams.presResource, ResourceParams.dwOffset, false, m_veboxSettings.uiHdrStateSize);
         }
         else
         {
@@ -877,7 +895,7 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxState(
                 pCmdBuffer,
                 &ResourceParams));
 
-            HalOcaInterface::OnIndirectState(*pCmdBuffer, *pOsContext, ResourceParams.presResource, ResourceParams.dwOffset, false, m_veboxSettings.uiGamutStateSize);
+            HalOcaInterface::OnIndirectState(*pCmdBuffer, (MOS_CONTEXT_HANDLE)pOsContext, ResourceParams.presResource, ResourceParams.dwOffset, false, m_veboxSettings.uiGamutStateSize);
         }
 
         MOS_ZeroMemory(&ResourceParams, sizeof(ResourceParams));
@@ -901,7 +919,7 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxState(
             pCmdBuffer,
             &ResourceParams));
 
-        HalOcaInterface::OnIndirectState(*pCmdBuffer, *pOsContext, ResourceParams.presResource, ResourceParams.dwOffset, false, m_veboxSettings.uiVertexTableSize);
+        HalOcaInterface::OnIndirectState(*pCmdBuffer, (MOS_CONTEXT_HANDLE)pOsContext, ResourceParams.presResource, ResourceParams.dwOffset, false, m_veboxSettings.uiVertexTableSize);
 
         MOS_ZeroMemory(&ResourceParams, sizeof(ResourceParams));
         if (bCmBuffer)
@@ -925,7 +943,7 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxState(
             pCmdBuffer,
             &ResourceParams));
 
-        HalOcaInterface::OnIndirectState(*pCmdBuffer, *pOsContext, ResourceParams.presResource, ResourceParams.dwOffset, false, m_veboxSettings.uiCapturePipeStateSize);
+        HalOcaInterface::OnIndirectState(*pCmdBuffer, (MOS_CONTEXT_HANDLE)pOsContext, ResourceParams.presResource, ResourceParams.dwOffset, false, m_veboxSettings.uiCapturePipeStateSize);
 
         if (pVeboxStateCmdParams->pLaceLookUpTables)
         {
@@ -964,7 +982,7 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxState(
             pCmdBuffer,
             &ResourceParams));
 
-        HalOcaInterface::OnIndirectState(*pCmdBuffer, *pOsContext, ResourceParams.presResource, ResourceParams.dwOffset, false, m_veboxSettings.uiGammaCorrectionStateSize);
+        HalOcaInterface::OnIndirectState(*pCmdBuffer, (MOS_CONTEXT_HANDLE)pOsContext, ResourceParams.presResource, ResourceParams.dwOffset, false, m_veboxSettings.uiGammaCorrectionStateSize);
 
         if (pVeboxStateCmdParams->pVebox3DLookUpTables)
         {
@@ -1014,7 +1032,7 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxState(
             pCmdBuffer,
             &ResourceParams));
 
-        HalOcaInterface::OnIndirectState(*pCmdBuffer, *pOsContext, ResourceParams.presResource, 0, true, 0);
+        HalOcaInterface::OnIndirectState(*pCmdBuffer, (MOS_CONTEXT_HANDLE)pOsContext, ResourceParams.presResource, 0, true, 0);
     }
 
     MHW_CHK_NULL(pVeboxMode);
@@ -1060,7 +1078,7 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxState(
     cmd.DW18.BypassChromaUpsampling                    = pChromaSampling->BypassChromaUpsampling;
     cmd.DW18.BypassChromaDownsampling                  = pChromaSampling->BypassChromaDownsampling;
 
-    Mos_AddCommand(pCmdBuffer, &cmd, cmd.byteSize);
+    pOsInterface->pfnAddCommand(pCmdBuffer, &cmd, cmd.byteSize);
 
 finish:
     return eStatus;
@@ -1329,7 +1347,7 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxDiIecp(
         MHW_ASSERTMESSAGE("Unsupported Vebox Scalability Settings");
     }
 
-    Mos_AddCommand(pCmdBuffer, &cmd, cmd.byteSize);
+    pOsInterface->pfnAddCommand(pCmdBuffer, &cmd, cmd.byteSize);
 
 finish:
     return eStatus;
@@ -1413,7 +1431,69 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxGamutState(
 
     // Initialize the Gamut_Expansion_Gamma_Correction.
     *pVeboxGEGammaCorrection = VeboxGEGammaCorrection;
-    if (pVeboxGamutParams->GExpMode != MHW_GAMUT_MODE_NONE)
+    if (pVeboxGamutParams->bColorBalance)
+    {
+        // Need to convert YUV input to RGB before GE
+        pIecpState->CscState.DW0.TransformEnable = true;
+        if (pVeboxGamutParams->ColorSpace == MHW_CSpace_BT601 ||
+            pVeboxGamutParams->ColorSpace == MHW_CSpace_xvYCC601 ||
+            pVeboxGamutParams->ColorSpace == MHW_CSpace_BT601_FullRange)
+        {
+            pIecpState->CscState.DW0.C0          = 76309;
+            pIecpState->CscState.DW1.C1          = 0;
+            pIecpState->CscState.DW2.C2          = 104597;
+            pIecpState->CscState.DW3.C3          = 76309;
+            pIecpState->CscState.DW4.C4          = MOS_BITFIELD_VALUE((uint32_t)-25675, 19);
+            pIecpState->CscState.DW5.C5          = MOS_BITFIELD_VALUE((uint32_t)-53279, 19);
+            pIecpState->CscState.DW6.C6          = 76309;
+            pIecpState->CscState.DW7.C7          = 132201;
+            pIecpState->CscState.DW8.C8          = 0;
+            pIecpState->CscState.DW9.OffsetIn1   = MOS_BITFIELD_VALUE((uint32_t)-2048, 16);
+            pIecpState->CscState.DW9.OffsetOut1  = 0;
+            pIecpState->CscState.DW10.OffsetIn2  = MOS_BITFIELD_VALUE((uint32_t)-16384, 16);
+            pIecpState->CscState.DW10.OffsetOut2 = 0;
+            pIecpState->CscState.DW11.OffsetIn3  = MOS_BITFIELD_VALUE((uint32_t)-16384, 16);
+            pIecpState->CscState.DW11.OffsetOut3 = 0;
+        }
+        else if (pVeboxGamutParams->ColorSpace == MHW_CSpace_BT709 ||
+                 pVeboxGamutParams->ColorSpace == MHW_CSpace_xvYCC709 ||
+                 pVeboxGamutParams->ColorSpace == MHW_CSpace_BT709_FullRange)
+        {
+            pIecpState->CscState.DW0.C0          = 76309;
+            pIecpState->CscState.DW1.C1          = 0;
+            pIecpState->CscState.DW2.C2          = 117489;
+            pIecpState->CscState.DW3.C3          = 76309;
+            pIecpState->CscState.DW4.C4          = MOS_BITFIELD_VALUE((uint32_t)-13975, 19);
+            pIecpState->CscState.DW5.C5          = MOS_BITFIELD_VALUE((uint32_t)-34925, 19);
+            pIecpState->CscState.DW6.C6          = 76309;
+            pIecpState->CscState.DW7.C7          = 138438;
+            pIecpState->CscState.DW8.C8          = 0;
+            pIecpState->CscState.DW9.OffsetIn1   = MOS_BITFIELD_VALUE((uint32_t)-2048, 16);
+            pIecpState->CscState.DW9.OffsetOut1  = 0;
+            pIecpState->CscState.DW10.OffsetIn2  = MOS_BITFIELD_VALUE((uint32_t)-16384, 16);
+            pIecpState->CscState.DW10.OffsetOut2 = 0;
+            pIecpState->CscState.DW11.OffsetIn3  = MOS_BITFIELD_VALUE((uint32_t)-16384, 16);
+            pIecpState->CscState.DW11.OffsetOut3 = 0;
+        }
+        else
+        {
+            MHW_ASSERTMESSAGE("Unknown primary");
+        }
+
+        pGamutState->DW0.GlobalModeEnable = true;
+        pGamutState->DW1.CmW              = 1023;
+
+        pGamutState->DW1.C0 = pVeboxGamutParams->Matrix[0][0];
+        pGamutState->DW0.C1 = pVeboxGamutParams->Matrix[0][1];
+        pGamutState->DW3.C2 = pVeboxGamutParams->Matrix[0][2];
+        pGamutState->DW2.C3 = pVeboxGamutParams->Matrix[1][0];
+        pGamutState->DW5.C4 = pVeboxGamutParams->Matrix[1][1];
+        pGamutState->DW4.C5 = pVeboxGamutParams->Matrix[1][2];
+        pGamutState->DW7.C6 = pVeboxGamutParams->Matrix[2][0];
+        pGamutState->DW6.C7 = pVeboxGamutParams->Matrix[2][1];
+        pGamutState->DW8.C8 = pVeboxGamutParams->Matrix[2][2];
+    }
+    else if (pVeboxGamutParams->GExpMode != MHW_GAMUT_MODE_NONE)
     {
         // Need to convert YUV input to RGB before GE
         pIecpState->CscState.DW0.TransformEnable = true;
@@ -1495,8 +1575,7 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxGamutState(
             pIecpState->CscState.DW0.YuvChannelSwap = true;
         }
         if (pVeboxGamutParams->ColorSpace == MHW_CSpace_BT601 ||
-            pVeboxGamutParams->ColorSpace == MHW_CSpace_xvYCC601 ||
-            pVeboxGamutParams->ColorSpace == MHW_CSpace_BT601_FullRange)
+            pVeboxGamutParams->ColorSpace == MHW_CSpace_xvYCC601)
         {
             pIecpState->CscState.DW0.C0          = 76309;
             pIecpState->CscState.DW1.C1          = 0;
@@ -1514,9 +1593,26 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxGamutState(
             pIecpState->CscState.DW11.OffsetIn3  = MOS_BITFIELD_VALUE((uint32_t)-16384, 16);
             pIecpState->CscState.DW11.OffsetOut3 = 0;
         }
+        else if (pVeboxGamutParams->ColorSpace == MHW_CSpace_BT601_FullRange)
+        {
+            pIecpState->CscState.DW0.C0          = 65536;
+            pIecpState->CscState.DW1.C1          = 0;
+            pIecpState->CscState.DW2.C2          = 91881;
+            pIecpState->CscState.DW3.C3          = 65536;
+            pIecpState->CscState.DW4.C4          = MOS_BITFIELD_VALUE((uint32_t)-22553, 19);
+            pIecpState->CscState.DW5.C5          = MOS_BITFIELD_VALUE((uint32_t)-46801, 19);
+            pIecpState->CscState.DW6.C6          = 65536;
+            pIecpState->CscState.DW7.C7          = 116130;
+            pIecpState->CscState.DW8.C8          = 0;
+            pIecpState->CscState.DW9.OffsetIn1   = 0;
+            pIecpState->CscState.DW9.OffsetOut1  = 0;
+            pIecpState->CscState.DW10.OffsetIn2  = MOS_BITFIELD_VALUE((uint32_t)-16384, 16);
+            pIecpState->CscState.DW10.OffsetOut2 = 0;
+            pIecpState->CscState.DW11.OffsetIn3  = MOS_BITFIELD_VALUE((uint32_t)-16384, 16);
+            pIecpState->CscState.DW11.OffsetOut3 = 0;
+        }
         else if (pVeboxGamutParams->ColorSpace == MHW_CSpace_BT709 ||
-                 pVeboxGamutParams->ColorSpace == MHW_CSpace_xvYCC709 ||
-                 pVeboxGamutParams->ColorSpace == MHW_CSpace_BT709_FullRange)
+                 pVeboxGamutParams->ColorSpace == MHW_CSpace_xvYCC709)
         {
             pIecpState->CscState.DW0.C0          = 76309;
             pIecpState->CscState.DW1.C1          = 0;
@@ -1534,7 +1630,26 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxGamutState(
             pIecpState->CscState.DW11.OffsetIn3  = MOS_BITFIELD_VALUE((uint32_t)-16384, 16);
             pIecpState->CscState.DW11.OffsetOut3 = 0;
         }
-        else if (pVeboxGamutParams->ColorSpace == MHW_CSpace_BT2020)
+        else if (pVeboxGamutParams->ColorSpace == MHW_CSpace_BT709_FullRange)
+        {
+            pIecpState->CscState.DW0.C0          = 65536;
+            pIecpState->CscState.DW1.C1          = 0;
+            pIecpState->CscState.DW2.C2          = 103206;
+            pIecpState->CscState.DW3.C3          = 65536;
+            pIecpState->CscState.DW4.C4          = MOS_BITFIELD_VALUE((uint32_t)-12277, 19);
+            pIecpState->CscState.DW5.C5          = MOS_BITFIELD_VALUE((uint32_t)-30679, 19);
+            pIecpState->CscState.DW6.C6          = 65536;
+            pIecpState->CscState.DW7.C7          = 121609;
+            pIecpState->CscState.DW8.C8          = 0;
+            pIecpState->CscState.DW9.OffsetIn1   = 0;
+            pIecpState->CscState.DW9.OffsetOut1  = 0;
+            pIecpState->CscState.DW10.OffsetIn2  = MOS_BITFIELD_VALUE((uint32_t)-16384, 16);
+            pIecpState->CscState.DW10.OffsetOut2 = 0;
+            pIecpState->CscState.DW11.OffsetIn3  = MOS_BITFIELD_VALUE((uint32_t)-16384, 16);
+            pIecpState->CscState.DW11.OffsetOut3 = 0;
+        }
+        else if (pVeboxGamutParams->ColorSpace == MHW_CSpace_BT2020 ||
+                 pVeboxGamutParams->ColorSpace == MHW_CSpace_BT2020_FullRange)
         {
             VeboxInterface_BT2020YUVToRGB(m_veboxHeap, pVeboxIecpParams, pVeboxGamutParams);
         }
@@ -1752,7 +1867,8 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxGamutState(
         pGamutState->DW1.CmW                  = 1023;
         dInverseGamma                         = 1.0;
 
-        for (uint32_t i = 0; i < pVeboxIecpParams->s1DLutParams.LUTSize; i++)
+        uint32_t cnt = MOS_MIN(pVeboxIecpParams->s1DLutParams.LUTSize, 256);
+        for (uint32_t i = 0; i < cnt; i++)
         {
             usGE_Values[i][0] = 257 * i;
             usGE_Values[i][1] =
@@ -1873,6 +1989,69 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxHdrState(
         pIecpState->CcmState.DW13.OffsetOutG = 0;
         pIecpState->CcmState.DW14.OffsetOutB = 0;
     }
+    else if (pVeboxIecpParams->bCcmCscEnable)
+    {
+        uint32_t nLutInBitDepth     = 12;
+        uint32_t nLutOutBitDepth    = 32;
+        uint64_t maxValLutIn        = (((uint64_t)1) << nLutInBitDepth) - 1;
+        uint64_t maxValLutOut       = (((uint64_t)1) << nLutOutBitDepth) - 1;
+
+        // HW provides 4K 1DLUT inverse gamma and fill in with identity
+        mhw_vebox_g12_X::VEBOX_HDR_INV_GAMMA_CORRECTION_STATE_CMD* pInverseGamma = pVeboxHdrState->PRGBCorrectedValue;
+        for (uint32_t i = 0; i < 4096; i++)
+        {
+            float x = (float)(i) / maxValLutIn;
+            uint32_t nCorrectedValue = (i < 4095) ? (uint32_t)(x * maxValLutOut + 0.5) : (uint32_t)(maxValLutOut);
+            pInverseGamma[i].DW0.Value = 0;
+            pInverseGamma[i].DW1.InverseRChannelGammaCorrectionValue = nCorrectedValue;
+            pInverseGamma[i].DW2.InverseGChannelGammaCorrectionValue = nCorrectedValue;
+            pInverseGamma[i].DW3.InverseBChannelGammaCorrectionValue = nCorrectedValue;
+        }
+        pVeboxHdrState->DW17440.ToneMappingEnable = false;
+        pIecpState->CcmState.DW0.ColorCorrectionMatrixEnable = false;
+        if ((pVeboxIecpParams->ColorSpace == MHW_CSpace_BT709) ||
+            (pVeboxIecpParams->ColorSpace == MHW_CSpace_BT709_FullRange))
+        {
+            pIecpState->CcmState.DW1.C0 = 0x00009937;
+            pIecpState->CcmState.DW0.C1 = 0x000115f6;
+            pIecpState->CcmState.DW3.C2 = 0;
+            pIecpState->CcmState.DW2.C3 = 0x00009937;
+            pIecpState->CcmState.DW5.C4 = 0x07ffe3f1;
+            pIecpState->CcmState.DW4.C5 = 0x07ffb9e0;
+            pIecpState->CcmState.DW7.C6 = 0x00009937;
+            pIecpState->CcmState.DW6.C7 = 0;
+            pIecpState->CcmState.DW8.C8 = 0x0000ebe6;
+            pIecpState->CcmState.DW9.OffsetInR   = (pVeboxIecpParams->ColorSpace == MHW_CSpace_BT709) ? 0xf8000000 : 0;
+            pIecpState->CcmState.DW10.OffsetInG  = (pVeboxIecpParams->ColorSpace == MHW_CSpace_BT709) ? 0xc0000000 : 0;
+            pIecpState->CcmState.DW11.OffsetInB  = (pVeboxIecpParams->ColorSpace == MHW_CSpace_BT709) ? 0xc0000000 : 0;
+            pIecpState->CcmState.DW12.OffsetOutR = 0;
+            pIecpState->CcmState.DW13.OffsetOutG = 0;
+            pIecpState->CcmState.DW14.OffsetOutB = 0;
+        }
+        else if ((pVeboxIecpParams->ColorSpace == MHW_CSpace_BT2020) ||
+                 (pVeboxIecpParams->ColorSpace == MHW_CSpace_BT2020_FullRange))
+        {
+            pIecpState->CcmState.DW1.C0 = 0x00009937;
+            pIecpState->CcmState.DW0.C1 = 0x000119d4;
+            pIecpState->CcmState.DW3.C2 = 0;
+            pIecpState->CcmState.DW2.C3 = 0x00009937;
+            pIecpState->CcmState.DW5.C4 = 0x07ffe75a;
+            pIecpState->CcmState.DW4.C5 = 0x07ffaa6a;
+            pIecpState->CcmState.DW7.C6 = 0x00009937;
+            pIecpState->CcmState.DW6.C7 = 0;
+            pIecpState->CcmState.DW8.C8 = 0x0000dce4;
+            pIecpState->CcmState.DW9.OffsetInR   = (pVeboxIecpParams->ColorSpace == MHW_CSpace_BT2020) ? 0xf8000000 : 0;
+            pIecpState->CcmState.DW10.OffsetInG  = (pVeboxIecpParams->ColorSpace == MHW_CSpace_BT2020) ? 0xc0000000 : 0;
+            pIecpState->CcmState.DW11.OffsetInB  = (pVeboxIecpParams->ColorSpace == MHW_CSpace_BT2020) ? 0xc0000000 : 0;
+            pIecpState->CcmState.DW12.OffsetOutR = 0;
+            pIecpState->CcmState.DW13.OffsetOutG = 0;
+            pIecpState->CcmState.DW14.OffsetOutB = 0;
+        }
+        else
+        {
+            MHW_ASSERTMESSAGE("Unsupported Input Color Space!");
+        }
+    }
 finish:
     return eStatus;
 }
@@ -1951,7 +2130,6 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxDndiState(
     pVeboxDndiState->DW7.ChromaLowTemporalDifferenceThreshold          = pVeboxDndiParams->dwChromaLTDThreshold;
     pVeboxDndiState->DW7.HotPixelCountChromaV                          = m_chromaParams.dwHotPixelCountChromaV;
     pVeboxDndiState->DW7.HotPixelThresholdChromaV                      = m_chromaParams.dwHotPixelThresholdChromaV;
-    pVeboxDndiState->DW8.ChromaDenoiseMovingPixelThreshold             = m_chromaParams.dwHotPixelThresholdChromaV;
 
     pVeboxDndiState->DW9.DnyWr040 = pVeboxDndiParams->dwPixRangeWeight[0];
     pVeboxDndiState->DW9.DnyWr140 = pVeboxDndiParams->dwPixRangeWeight[1];
@@ -2496,9 +2674,10 @@ MOS_STATUS MhwVeboxInterfaceG12::VeboxInterface_BT2020YUVToRGB(
 
     if (pVeboxGamutParams->ColorSpace == MHW_CSpace_BT2020)                   // Limited->Full
     {
+        MHW_CHK_NULL(pVeboxIecpParams);
         if (pVeboxIecpParams->s1DLutParams.bActive)
         {
-            // The updated value for TGL VEBOX HDR and Fp16 path 
+            // The updated value for TGL VEBOX HDR and float 16bit output path 
             pIecpState->CscState.DW0.C0 = 76533;
             pIecpState->CscState.DW1.C1 = 0;
             pIecpState->CscState.DW2.C2 = 110337;
@@ -2659,7 +2838,7 @@ MOS_STATUS MhwVeboxInterfaceG12::VeboxInterface_H2SManualMode(
     uiOETF[255] = 65535;
 
     // Back end CSC setting, need to convert BT2020 YUV input to RGB before GE
-    VeboxInterface_BT2020YUVToRGB(pVeboxHeap, pVeboxIecpParams, pVeboxGamutParams);
+    MHW_CHK_STATUS(VeboxInterface_BT2020YUVToRGB(pVeboxHeap, pVeboxIecpParams, pVeboxGamutParams));
 
     // Global setting
     pGamutState->DW0.GlobalModeEnable = true;
@@ -2799,7 +2978,7 @@ MOS_STATUS MhwVeboxInterfaceG12::AdjustBoundary(
             (uint32_t)pSurfaceParam->rcSrc.right,
             *pdwSurfaceHeight,
             *pdwSurfaceWidth);
-        MT_LOG5(MT_VP_VE_ADJUST_SURFPARAM, MT_NORMAL, MT_VP_RENDER_VE_CROPPING, 1, MT_RECT_BOTTOM, pSurfaceParam->rcSrc.bottom, MT_RECT_RIGHT, pSurfaceParam->rcSrc.right,
+        MT_LOG5(MT_VP_MHW_VE_ADJUST_SURFPARAM, MT_NORMAL, MT_VP_RENDER_VE_CROPPING, 1, MT_RECT_BOTTOM, pSurfaceParam->rcSrc.bottom, MT_RECT_RIGHT, pSurfaceParam->rcSrc.right,
             MT_SURF_HEIGHT, *pdwSurfaceHeight, MT_SURF_WIDTH, *pdwSurfaceWidth);
     }
     else
@@ -2890,8 +3069,8 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxTilingConvert(
     veboxInputSurfCtrlBits.DW0.IndexToMemoryObjectControlStateMocsTables =
     veboxOutputSurfCtrlBits.DW0.IndexToMemoryObjectControlStateMocsTables =
         (m_osInterface->pfnCachePolicyGetMemoryObject(
-            MOS_CODEC_RESOURCE_USAGE_SURFACE_UNCACHED,
-            m_osInterface->pfnGetGmmClientContext(m_osInterface))).DwordValue >> 1; //Need shift 1 bit for resvered bit
+            MOS_MP_RESOURCE_USAGE_DEFAULT,
+            m_osInterface->pfnGetGmmClientContext(m_osInterface))).Gen12.Index;
 
     // Set Input surface compression status
     if (inSurParams->CompressionMode != MOS_MMC_DISABLED)
@@ -2922,55 +3101,41 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxTilingConvert(
     }
 
     // Set Output surface compression status
-    if (outputSurface)
+    // Double Buffer copy
+    surface = outputSurface;
+
+    if (outSurParams->CompressionMode != MOS_MMC_DISABLED)
     {
-        // Double Buffer copy
-        surface = outputSurface;
+        veboxOutputSurfCtrlBits.DW0.MemoryCompressionEnable = true;
 
-        if (outSurParams->CompressionMode != MOS_MMC_DISABLED)
+        if (outSurParams->CompressionMode == MOS_MMC_RC)
         {
-            veboxInputSurfCtrlBits.DW0.MemoryCompressionEnable = true;
-
-            if (outSurParams->CompressionMode == MOS_MMC_RC)
-            {
-                veboxInputSurfCtrlBits.DW0.CompressionType = 1;
-            }
-            else
-            {
-                veboxInputSurfCtrlBits.DW0.CompressionType = 0;
-            }
-        }
-
-        if (surface)
-        {
-            switch (surface->TileType)
-            {
-            case MOS_TILE_YF:
-                veboxOutputSurfCtrlBits.DW0.TiledResourceModeForOutputFrameSurfaceBaseAddress = TRMODE_TILEYF;
-                break;
-            case MOS_TILE_YS:
-                veboxOutputSurfCtrlBits.DW0.TiledResourceModeForOutputFrameSurfaceBaseAddress = TRMODE_TILEYS;
-                break;
-            default:
-                veboxOutputSurfCtrlBits.DW0.TiledResourceModeForOutputFrameSurfaceBaseAddress = TRMODE_NONE;
-                break;
-            }
-        }
-
-    }
-    else
-    {
-        // In-Place Resolve
-        surface = inputSurface;
-
-        if (inSurParams->CompressionMode == MOS_MMC_MC)
-        {
-            veboxOutputSurfCtrlBits.DW0.MemoryCompressionEnable = true;
             veboxOutputSurfCtrlBits.DW0.CompressionType = 1;
+        }
+        else
+        {
+            veboxOutputSurfCtrlBits.DW0.CompressionType = 0;
+        }
+    }
+
+    if (surface)
+    {
+        switch (surface->TileType)
+        {
+        case MOS_TILE_YF:
+            veboxOutputSurfCtrlBits.DW0.TiledResourceModeForOutputFrameSurfaceBaseAddress = TRMODE_TILEYF;
+            break;
+        case MOS_TILE_YS:
+            veboxOutputSurfCtrlBits.DW0.TiledResourceModeForOutputFrameSurfaceBaseAddress = TRMODE_TILEYS;
+            break;
+        default:
+            veboxOutputSurfCtrlBits.DW0.TiledResourceModeForOutputFrameSurfaceBaseAddress = TRMODE_NONE;
+            break;
         }
     }
 
     MOS_ZeroMemory(&ResourceParams, sizeof(MHW_RESOURCE_PARAMS));
+    InitMocsParams(ResourceParams, &cmd.DW1_2.Value[0], 1, 6);
     ResourceParams.presResource = inputSurface;
     ResourceParams.HwCommandType = MOS_VEBOX_TILING_CONVERT;
 
@@ -2982,15 +3147,9 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxTilingConvert(
     MHW_CHK_STATUS(pfnAddResourceToCmd(m_osInterface, cmdBuffer, &ResourceParams));
 
     MOS_ZeroMemory(&ResourceParams, sizeof(MHW_RESOURCE_PARAMS));
+    InitMocsParams(ResourceParams, &cmd.DW3_4.Value[0], 1, 6);
 
-    if (outputSurface)
-    {
-        ResourceParams.presResource = outputSurface;
-    }
-    else
-    {
-        ResourceParams.presResource = inputSurface;
-    }
+    ResourceParams.presResource = outputSurface;
 
     ResourceParams.HwCommandType = MOS_VEBOX_TILING_CONVERT;
 
@@ -2998,11 +3157,10 @@ MOS_STATUS MhwVeboxInterfaceG12::AddVeboxTilingConvert(
     ResourceParams.dwLocationInCmd = 3;
     ResourceParams.pdwCmd = &(cmd.DW3_4.Value[0]);
     ResourceParams.bIsWritable = true;
-    ResourceParams.dwOffset =
-        (outputSurface != nullptr ? outSurParams->dwOffset : inSurParams->dwOffset) + veboxOutputSurfCtrlBits.DW0.Value;
+    ResourceParams.dwOffset = outSurParams->dwOffset + veboxOutputSurfCtrlBits.DW0.Value;
     MHW_CHK_STATUS(pfnAddResourceToCmd(m_osInterface, cmdBuffer, &ResourceParams));
 
-    Mos_AddCommand(cmdBuffer, &cmd, cmd.byteSize);
+    m_osInterface->pfnAddCommand(cmdBuffer, &cmd, cmd.byteSize);
 
 finish:
     return eStatus;
@@ -3049,7 +3207,7 @@ MOS_STATUS MhwVeboxInterfaceG12::CreateGpuContext(
     MHW_CHK_NULL(pOsInterface);
 
     Mos_SetVirtualEngineSupported(pOsInterface, true);
-    Mos_CheckVirtualEngineSupported(pOsInterface, true, true);
+    pOsInterface->pfnVirtualEngineSupported(pOsInterface, true, true);
 
     if (!MOS_VE_CTXBASEDSCHEDULING_SUPPORTED(pOsInterface))
     {

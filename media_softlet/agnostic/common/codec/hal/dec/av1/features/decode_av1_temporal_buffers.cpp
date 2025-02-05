@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019-2021, Intel Corporation
+* Copyright (c) 2019-2024, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -28,17 +28,18 @@
 #include "decode_av1_basic_feature.h"
 #include "decode_av1_temporal_buffers.h"
 #include "decode_utils.h"
-#include "codechal_utilities.h"
 
 namespace decode
 {
-    MOS_STATUS Av1TempBufferOpInf::Init(CodechalHwInterface& hwInterface, DecodeAllocator& allocator,
+    MOS_STATUS Av1TempBufferOpInf::Init(void* hwInterface, DecodeAllocator& allocator,
                                        Av1BasicFeature& basicFeature)
     {
         DECODE_CHK_STATUS(BufferOpInf::Init(hwInterface, allocator, basicFeature));
-        m_avpInterface = m_hwInterface->GetAvpInterface();
+        if (m_hwInterface != nullptr)
+        {
+            m_avpItf = std::static_pointer_cast<mhw::vdbox::avp::Itf>(((CodechalHwInterfaceNext*)m_hwInterface)->GetAvpInterfaceNext());
+        }
         m_basicFeature = &basicFeature;
-        DECODE_CHK_NULL(m_avpInterface);
         return MOS_STATUS_SUCCESS;
     }
 
@@ -47,10 +48,10 @@ namespace decode
         DECODE_FUNC_CALL();
 
         int32_t mibSizeLog2 = av1MinMibSizeLog2;
-        MhwVdboxAvpBufferSizeParams avpBufSizeParam;
+        AvpBufferSizePar avpBufSizeParam;
         SetAvpBufSizeParam(avpBufSizeParam, mibSizeLog2);
 
-        if (m_avpInterface->GetAv1BufferSize(mvTemporalBuf,
+        if (m_avpItf->GetAvpBufSize(mhw::vdbox::avp::mvTemporalBuffer,
                                             &avpBufSizeParam) != MOS_STATUS_SUCCESS)
         {
             DECODE_ASSERTMESSAGE( "Failed to get MvTemporalBuffer size.");
@@ -58,15 +59,15 @@ namespace decode
 
         Av1RefAssociatedBufs *bufs = MOS_New(Av1RefAssociatedBufs);
         bufs->mvBuf = m_allocator->AllocateBuffer(
-            avpBufSizeParam.m_bufferSize, "MvTemporalBuffer", resourceInternalReadWriteCache, notLockableVideoMem);
+            avpBufSizeParam.bufferSize, "MvTemporalBuffer", resourceInternalReadWriteCache, notLockableVideoMem);
 
-        if (m_avpInterface->GetAv1BufferSize(segmentIdBuf,
+        if (m_avpItf->GetAvpBufSize(mhw::vdbox::avp::segmentIdBuffer,
                                             &avpBufSizeParam) != MOS_STATUS_SUCCESS)
         {
             DECODE_ASSERTMESSAGE( "Failed to get SegmentIdBuffer size.");
         }
         bufs->segIdWriteBuf.buffer = m_allocator->AllocateBuffer(
-            avpBufSizeParam.m_bufferSize, "SegmentIdWriteBuffer", resourceInternalReadWriteCache, notLockableVideoMem);
+            avpBufSizeParam.bufferSize, "SegmentIdWriteBuffer", resourceInternalReadWriteCache, notLockableVideoMem);
 
         bufs->bwdAdaptCdfBuf.buffer = m_allocator->AllocateBuffer(MOS_ALIGN_CEIL(m_basicFeature->m_cdfMaxNumBytes,
             CODECHAL_PAGE_SIZE), "CdfTableBuffer", resourceInternalReadWriteCache, notLockableVideoMem);
@@ -84,20 +85,20 @@ namespace decode
         }
 
         int32_t mibSizeLog2 = m_basicFeature->m_av1PicParams->m_seqInfoFlags.m_fields.m_use128x128Superblock ? av1MaxMibSizeLog2 : av1MinMibSizeLog2;
-        MhwVdboxAvpBufferSizeParams avpBufSizeParam;
+        AvpBufferSizePar avpBufSizeParam;
         SetAvpBufSizeParam(avpBufSizeParam, mibSizeLog2);
 
-        DECODE_CHK_STATUS(m_avpInterface->GetAv1BufferSize(
-            mvTemporalBuf,
+        DECODE_CHK_STATUS(m_avpItf->GetAvpBufSize(
+            mhw::vdbox::avp::mvTemporalBuffer,
             &avpBufSizeParam));
         DECODE_CHK_STATUS(m_allocator->Resize(
-            buffer->mvBuf, avpBufSizeParam.m_bufferSize, notLockableVideoMem, false));
+            buffer->mvBuf, avpBufSizeParam.bufferSize, notLockableVideoMem, false));
 
-        DECODE_CHK_STATUS(m_avpInterface->GetAv1BufferSize(
-            segmentIdBuf,
+        DECODE_CHK_STATUS(m_avpItf->GetAvpBufSize(
+            mhw::vdbox::avp::segmentIdBuffer,
             &avpBufSizeParam));
         DECODE_CHK_STATUS(m_allocator->Resize(
-            buffer->segIdWriteBuf.buffer, avpBufSizeParam.m_bufferSize, notLockableVideoMem, false));
+            buffer->segIdWriteBuf.buffer, avpBufSizeParam.bufferSize, notLockableVideoMem, false));
 
         RecordSegIdBufInfo(buffer);
         RecordCdfTableBufInfo(buffer);
@@ -105,7 +106,7 @@ namespace decode
         return MOS_STATUS_SUCCESS;
     }
 
-    void Av1TempBufferOpInf::SetAvpBufSizeParam(MhwVdboxAvpBufferSizeParams& params, int32_t mibSizeLog2)
+    void Av1TempBufferOpInf::SetAvpBufSizeParam(AvpBufferSizePar &params, int32_t mibSizeLog2)
     {
         int32_t miCols = MOS_ALIGN_CEIL(m_basicFeature->m_width, 8) >> av1MiSizeLog2;
         int32_t miRows = MOS_ALIGN_CEIL(m_basicFeature->m_height, 8) >> av1MiSizeLog2;
@@ -115,13 +116,14 @@ namespace decode
         heightInSb     = miRows >> mibSizeLog2;
 
         MOS_ZeroMemory(&params, sizeof(params));
-        params.m_picWidth    = widthInSb;
-        params.m_picHeight   = heightInSb;
-        params.m_isSb128x128 = false;
+        params.width       = widthInSb;
+        params.height      = heightInSb;
+        params.isSb128x128 = false;
         if (m_basicFeature->m_av1PicParams != nullptr)
         {
-            params.m_isSb128x128 = m_basicFeature->m_av1PicParams->m_seqInfoFlags.m_fields.m_use128x128Superblock ? true : false;
+            params.isSb128x128 = m_basicFeature->m_av1PicParams->m_seqInfoFlags.m_fields.m_use128x128Superblock ? true : false;
         }
+        params.chromaFormat = m_basicFeature->m_chromaFormat;
     }
 
     void Av1TempBufferOpInf::RecordSegIdBufInfo(Av1RefAssociatedBufs *buffer)
@@ -195,6 +197,12 @@ namespace decode
 
     bool Av1TempBufferOpInf::IsAvailable(Av1RefAssociatedBufs* &buffer)
     {
+        auto osInterface = m_basicFeature->GetOsInterface();
+        if (osInterface != nullptr && osInterface->pfnIsMismatchOrderProgrammingSupported())
+        {
+            return true;
+        }
+
         if (buffer == nullptr)
         {
             return false;
@@ -218,7 +226,7 @@ namespace decode
     {
         DECODE_FUNC_CALL();
 
-        if (buffer != nullptr)
+        if (buffer != nullptr && m_allocator != nullptr)
         {
             m_allocator->Destroy(buffer->mvBuf);
 

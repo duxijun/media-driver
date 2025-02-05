@@ -1057,7 +1057,7 @@ int CmSurfaceState2Dor3D::GetPlaneDefinitionRender()
         case Format_Y210:
         case Format_Y216:
         {
-            RENDERHAL_PLANE_DEFINITION temp;
+            RENDERHAL_PLANE_DEFINITION temp = RENDERHAL_PLANES_DEFINITION_COUNT;
             m_renderhal->pRenderHalPltInterface->GetPlaneDefForFormatY216(
                 isRenderOutTarget,
                 m_renderhal,
@@ -1439,7 +1439,7 @@ MOS_STATUS CmSurfaceState2Dor3D::UpdateSurfaceState()
                 }
             }
         }
-        m_renderhal->pMhwStateHeap->SetSurfaceStateEntry(&SurfStateParams);
+        MHW_CHK_STATUS_RETURN(m_renderhal->pMhwStateHeap->SetSurfaceStateEntry(&SurfStateParams));
     }
 
     return MOS_STATUS_SUCCESS;
@@ -1490,7 +1490,7 @@ MOS_STATUS CmSurfaceStateBuffer::GenerateSurfaceState(CM_HAL_BUFFER_SURFACE_STAT
     // Default tile mode of surface state buffer is linear
     params.bGMMTileEnabled = true;
 
-    m_renderhal->pMhwStateHeap->SetSurfaceStateEntry(&params);
+    MHW_CHK_STATUS_RETURN(m_renderhal->pMhwStateHeap->SetSurfaceStateEntry(&params));
 
     return MOS_STATUS_SUCCESS;
 }

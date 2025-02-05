@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019-2020, Intel Corporation
+* Copyright (c) 2019-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -25,7 +25,11 @@
 //! \details
 //!
 #include "vphal_render_vebox_memdecomp.h"
+#include "mos_os_cp_interface_specific.h"
 #include "vphal_debug.h"
+#include "vp_utils.h"
+
+#define DECOMPRESSION_WIDTH_ALIGNMENT_IN_BYTE 32
 
 MediaVeboxDecompState::MediaVeboxDecompState():
     MediaMemDecompBaseState(),
@@ -43,8 +47,15 @@ MediaVeboxDecompState::~MediaVeboxDecompState()
 
     if (m_cpInterface)
     {
-        Delete_MhwCpInterface(m_cpInterface);
-        m_cpInterface = nullptr;
+        if(m_osInterface)
+        {
+            m_osInterface->pfnDeleteMhwCpInterface(m_cpInterface);
+            m_cpInterface = nullptr;
+        }
+        else
+        {
+            VPHAL_MEMORY_DECOMP_ASSERTMESSAGE("Failed to destroy cpInterface.");
+        }
     }
 
     if (m_veboxInterface)
@@ -183,7 +194,9 @@ MOS_STATUS MediaVeboxDecompState::MediaMemoryCopy(
     PMOS_RESOURCE outputResource,
     bool          outputCompressed)
 {
-    MOS_STATUS                          eStatus = MOS_STATUS_SUCCESS;
+    MOS_STATUS eStatus             = MOS_STATUS_SUCCESS;
+    bool       bValidInputSurface  = false;
+    bool       bValidOutputSurface = false;
 
     MHW_FUNCTION_ENTER;
 
@@ -200,7 +213,7 @@ MOS_STATUS MediaVeboxDecompState::MediaMemoryCopy(
     targetSurface.Format     = Format_Invalid;
     targetSurface.OsResource = *outputResource;
 
-#if !defined(LINUX) && !defined(ANDROID) && !EMUL
+#if !defined(LINUX) && !defined(ANDROID) && !EMUL && !_VULKAN
     // for Double Buffer copy, clear the allocationInfo temply
     MOS_ZeroMemory(&targetSurface.OsResource.AllocationInfo, sizeof(SResidencyInfo));
 #endif
@@ -213,16 +226,11 @@ MOS_STATUS MediaVeboxDecompState::MediaMemoryCopy(
 #if (_DEBUG || _RELEASE_INTERNAL)
     {
         // Read user feature key to force outputCompressed
-        MOS_USER_FEATURE_VALUE_DATA userFeatureData;
-        MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
-        MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
-            nullptr,
-            __VPHAL_VEBOX_FORCE_VP_MEMCOPY_OUTPUTCOMPRESSED_ID,
-            &userFeatureData,
-            m_osInterface ? m_osInterface->pOsContext : nullptr));
-
-        outputCompressed = userFeatureData.bData ? true : false;
-
+        ReadUserSettingForDebug(
+            m_userSettingPtr,
+            outputCompressed,
+            __VPHAL_VEBOX_FORCE_VP_MEMCOPY_OUTPUTCOMPRESSED,
+            MediaUserSetting::Group::Sequence);
     }
 #endif
 
@@ -257,7 +265,7 @@ MOS_STATUS MediaVeboxDecompState::MediaMemoryCopy(
                 //non lockable resource enabled, we can't lock source surface
                 eStatus = MOS_STATUS_NULL_POINTER;
                 VPHAL_MEMORY_DECOMP_ASSERTMESSAGE("Failed to lock non-lockable input resource, buffer copy failed, eStatus:%d.\n", eStatus);
-                MT_ERR1(MT_ERR_LOCK_SURFACE, MT_SURF_IS_INPUT, 1);
+                MT_ERR2(MT_VE_DECOMP_COPY, MT_SURF_IS_INPUT, 1, MT_VE_DECOMP_COPY_SURF_LOCK_STATUS, eStatus);
                 break;
             }
 
@@ -268,7 +276,7 @@ MOS_STATUS MediaVeboxDecompState::MediaMemoryCopy(
                 eStatus = MOS_STATUS_NULL_POINTER;
                 m_osInterface->pfnUnlockResource(m_osInterface, &sourceSurface.OsResource);
                 VPHAL_MEMORY_DECOMP_ASSERTMESSAGE("Failed to lock non-lockable output resource, buffer copy failed, eStatus:%d.\n", eStatus);
-                MT_ERR1(MT_ERR_LOCK_SURFACE, MT_SURF_IS_OUTPUT, 1);
+                MT_ERR2(MT_VE_DECOMP_COPY, MT_SURF_IS_OUTPUT, 1, MT_VE_DECOMP_COPY_SURF_LOCK_STATUS, eStatus);
                 break;
             }
             // This resource is a series of bytes. Is not 2 dimensional.
@@ -281,7 +289,7 @@ MOS_STATUS MediaVeboxDecompState::MediaMemoryCopy(
             if (eStatus != MOS_STATUS_SUCCESS)
             {
                 VPHAL_MEMORY_DECOMP_ASSERTMESSAGE("Failed to copy linear buffer from source to target, eStatus:%d.\n", eStatus);
-                MT_ERR(MT_MEDIA_COPY_CPU);
+                MT_ERR1(MT_VE_DECOMP_COPY, MT_MOS_STATUS, eStatus);
                 break;
             }
         } while (false);
@@ -297,13 +305,21 @@ MOS_STATUS MediaVeboxDecompState::MediaMemoryCopy(
     {
         eStatus = MOS_STATUS_INVALID_PARAMETER;
         VPHAL_MEMORY_DECOMP_ASSERTMESSAGE("VEBOX does not support non-64align pitch linear surface, eStatus:%d.\n", eStatus);
-        MT_ERR2(MT_MEDIA_COPY_VE_LMITATION, MT_SURF_PITCH, sourceSurface.dwPitch, MT_SURF_PITCH, targetSurface.dwPitch);
+        MT_ERR2(MT_VE_DECOMP_COPY, MT_SURF_PITCH, sourceSurface.dwPitch, MT_SURF_PITCH, targetSurface.dwPitch);
         MOS_TraceEventExt(EVENT_MEDIA_COPY, EVENT_TYPE_END, nullptr, 0, nullptr, 0);
         return eStatus;
     }
 
     //Get context before proceeding
     auto gpuContext = m_osInterface->CurrentGpuContextOrdinal;
+
+    //Check whether surface is valid, or it will cause page fault
+    m_osInterface->pfnVerifyMosSurface(&sourceSurface, bValidInputSurface);
+    m_osInterface->pfnVerifyMosSurface(&targetSurface, bValidOutputSurface);
+    if (!bValidInputSurface || !bValidOutputSurface)
+    {
+        VPHAL_MEMORY_DECOMP_CHK_STATUS_RETURN(MOS_STATUS_INVALID_PARAMETER);
+    }
 
     // Sync for Vebox read
     m_osInterface->pfnSyncOnResource(
@@ -338,7 +354,9 @@ MOS_STATUS MediaVeboxDecompState::MediaMemoryCopy2D(
     uint32_t      bpp,
     bool          outputCompressed)
 {
-    MOS_STATUS                          eStatus = MOS_STATUS_SUCCESS;
+    MOS_STATUS eStatus             = MOS_STATUS_SUCCESS;
+    bool       bValidInputSurface  = false;
+    bool       bValidOutputSurface = false;
 
     MHW_FUNCTION_ENTER;
 
@@ -355,7 +373,7 @@ MOS_STATUS MediaVeboxDecompState::MediaMemoryCopy2D(
     targetSurface.Format = Format_Invalid;
     targetSurface.OsResource = *outputResource;
 
-#if !defined(LINUX) && !defined(ANDROID) && !EMUL
+#if !defined(LINUX) && !defined(ANDROID) && !EMUL && !_VULKAN
     // for Double Buffer copy, clear the allocationInfo temply
     MOS_ZeroMemory(&targetSurface.OsResource.AllocationInfo, sizeof(SResidencyInfo));
 #endif
@@ -368,15 +386,11 @@ MOS_STATUS MediaVeboxDecompState::MediaMemoryCopy2D(
 #if (_DEBUG || _RELEASE_INTERNAL)
     {
         // Read user feature key to Force outputCompressed
-        MOS_USER_FEATURE_VALUE_DATA userFeatureData;
-        MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
-        MOS_USER_FEATURE_INVALID_KEY_ASSERT(MOS_UserFeature_ReadValue_ID(
-            nullptr,
-            __VPHAL_VEBOX_FORCE_VP_MEMCOPY_OUTPUTCOMPRESSED_ID,
-            &userFeatureData,
-            m_osInterface ? m_osInterface->pOsContext : nullptr));
-
-        outputCompressed = userFeatureData.bData ? true : false;
+        ReadUserSettingForDebug(
+            m_userSettingPtr,
+            outputCompressed,
+            __VPHAL_VEBOX_FORCE_VP_MEMCOPY_OUTPUTCOMPRESSED,
+            MediaUserSetting::Group::Sequence);
     }
 #endif
 
@@ -427,6 +441,14 @@ MOS_STATUS MediaVeboxDecompState::MediaMemoryCopy2D(
     targetSurface.dwWidth  = copyWidth / pixelInByte;
     targetSurface.dwHeight = copyHeight;
 
+    //Check whether surface is valid, or it will cause page fault
+    m_osInterface->pfnVerifyMosSurface(&sourceSurface, bValidInputSurface);
+    m_osInterface->pfnVerifyMosSurface(&targetSurface, bValidOutputSurface);
+    if (!bValidInputSurface || !bValidOutputSurface)
+    {
+        VPHAL_MEMORY_DECOMP_CHK_STATUS_RETURN(MOS_STATUS_INVALID_PARAMETER);
+    }
+
     // Sync for Vebox write
     m_osInterface->pfnSyncOnResource(
         m_osInterface,
@@ -470,7 +492,7 @@ MOS_STATUS MediaVeboxDecompState::MediaMemoryTileConvert(
     targetSurface.Format = Format_Invalid;
     targetSurface.OsResource = *outputResource;
 
-#if !defined(LINUX) && !defined(ANDROID) && !EMUL
+#if !defined(LINUX) && !defined(ANDROID) && !EMUL && !_VULKAN
     // for Double Buffer copy, clear the allocationInfo temply
     MOS_ZeroMemory(&targetSurface.OsResource.AllocationInfo, sizeof(SResidencyInfo));
 #endif
@@ -484,7 +506,7 @@ MOS_STATUS MediaVeboxDecompState::MediaMemoryTileConvert(
         sourceSurface.TileType == MOS_TILE_LINEAR)
     {
         VPHAL_MEMORY_DECOMP_NORMALMESSAGE("unsupport linear to linear convert, return unsupport feature");
-        MT_ERR2(MT_MEDIA_COPY_VE_LMITATION, MT_SURF_TILE_TYPE, MOS_TILE_LINEAR, MT_SURF_TILE_TYPE, MOS_TILE_LINEAR);
+        MT_ERR2(MT_VE_DECOMP_COPY, MT_SURF_TILE_TYPE, MOS_TILE_LINEAR, MT_SURF_TILE_TYPE, MOS_TILE_LINEAR);
         return MOS_STATUS_PLATFORM_NOT_SUPPORTED;
     }
 
@@ -494,7 +516,7 @@ MOS_STATUS MediaVeboxDecompState::MediaMemoryTileConvert(
         if (!IsFormatSupported(&sourceSurface))
         {
             VPHAL_MEMORY_DECOMP_NORMALMESSAGE("unsupport processing format, return unsupport feature");
-            MT_ERR2(MT_MEDIA_COPY_VE_LMITATION, MT_SURF_MOS_FORMAT, sourceSurface.Format, MT_SURF_IS_INPUT, 1);
+            MT_ERR2(MT_VE_DECOMP_COPY, MT_SURF_MOS_FORMAT, sourceSurface.Format, MT_SURF_IS_INPUT, 1);
             return MOS_STATUS_PLATFORM_NOT_SUPPORTED;
         }
 
@@ -506,7 +528,7 @@ MOS_STATUS MediaVeboxDecompState::MediaMemoryTileConvert(
         if (!IsFormatSupported(&targetSurface))
         {
             VPHAL_MEMORY_DECOMP_NORMALMESSAGE("unsupport processing format, return unsupport feature");
-            MT_ERR2(MT_MEDIA_COPY_VE_LMITATION, MT_SURF_MOS_FORMAT, targetSurface.Format, MT_SURF_IS_OUTPUT, 1);
+            MT_ERR2(MT_VE_DECOMP_COPY, MT_SURF_MOS_FORMAT, targetSurface.Format, MT_SURF_IS_OUTPUT, 1);
             return MOS_STATUS_PLATFORM_NOT_SUPPORTED;
         }
 
@@ -559,7 +581,7 @@ MOS_STATUS MediaVeboxDecompState::Initialize(
     MHW_VEBOX_GPUNODE_LIMIT     GpuNodeLimit;
     MOS_GPU_NODE                VeboxGpuNode;
     MOS_GPU_CONTEXT             VeboxGpuContext;
-    RENDERHAL_SETTINGS          RenderHalSettings;
+    RENDERHAL_SETTINGS_LEGACY   RenderHalSettings;
 
     eStatus = MOS_STATUS_SUCCESS;
 
@@ -572,6 +594,8 @@ MOS_STATUS MediaVeboxDecompState::Initialize(
     m_cpInterface     = cpInterface;
     m_mhwMiInterface  = mhwMiInterface;
     m_veboxInterface  = veboxInterface;
+
+    m_userSettingPtr  = m_osInterface->pfnGetUserSettingInstance(m_osInterface);
 
     // Set-Up Vebox decompression enable or not
     IsVeboxDecompressionEnabled();
@@ -599,7 +623,7 @@ MOS_STATUS MediaVeboxDecompState::Initialize(
 
         if (m_veboxInterface->m_veboxHeap == nullptr)
         {
-            m_veboxInterface->CreateHeap();
+            VPHAL_MEMORY_DECOMP_CHK_STATUS_RETURN(m_veboxInterface->CreateHeap());
         }
 
 #if (_DEBUG || _RELEASE_INTERNAL)
@@ -641,7 +665,33 @@ MOS_STATUS MediaVeboxDecompState::GetResourceInfo(PMOS_SURFACE surface)
         &resDetails));
 
     surface->Format                                             = resDetails.Format;
+#if defined(LINUX) && !defined(WDDM_LINUX)
+    if ((surface->Format == Format_NV12 || surface->Format == Format_P010) && surface->OsResource.iWidth & 1 != 0)
+    {
+        uint32_t bitsPerPixel = 8;
+        if (surface->Format == Format_P010)
+        {
+            bitsPerPixel = 16;
+        }
+
+        uint32_t alignWidth = MOS_ALIGN_CEIL(resDetails.dwWidth, DECOMPRESSION_WIDTH_ALIGNMENT_IN_BYTE*8/bitsPerPixel);
+        if (alignWidth <= resDetails.dwPitch*8/bitsPerPixel)
+        {
+            surface->dwWidth = alignWidth;
+        }
+        else
+        {
+            VPHAL_MEMORY_DECOMP_ASSERTMESSAGE("May got green line corruption.");
+            surface->dwWidth = resDetails.dwWidth;
+        }
+    }
+    else
+    {
+        surface->dwWidth                                        = resDetails.dwWidth;
+    }
+#else
     surface->dwWidth                                            = resDetails.dwWidth;
+#endif
     surface->dwHeight                                           = resDetails.dwHeight;
     surface->dwPitch                                            = resDetails.dwPitch;
     surface->dwDepth                                            = resDetails.dwDepth;
@@ -934,7 +984,9 @@ bool MediaVeboxDecompState::IsFormatSupported(PMOS_SURFACE surface)
         surface->dwHeight = surface->dwSize / surface->dwPitch;
     }
 
-    if (IS_RGB64_FLOAT_FORMAT(surface->Format) || IS_RGB64_FORMAT(surface->Format))
+    if (IS_RGB64_FLOAT_FORMAT(surface->Format) ||
+        IS_RGB64_FORMAT(surface->Format)       ||
+        surface->Format == Format_G32R32F)
     {
         surface->Format = Format_Y416;
     }

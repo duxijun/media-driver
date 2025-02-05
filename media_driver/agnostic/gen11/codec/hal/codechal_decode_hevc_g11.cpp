@@ -257,6 +257,7 @@ MOS_STATUS CodechalDecodeHevcG11::SetFrameStates ()
         (((m_decodeStatusBuf.m_decodeStatus->m_hucErrorStatus2 >> 32) & m_hucInterface->GetHucStatus2ImemLoadedMask()) == 0))
     {
         CODECHAL_DECODE_ASSERTMESSAGE("HuC IMEM Loaded fails");
+        MT_ERR1(MT_DEC_HEVC, MT_DEC_HUC_ERROR_STATUS2, (m_decodeStatusBuf.m_decodeStatus->m_hucErrorStatus2 >> 32));
         return MOS_STATUS_UNKNOWN;
     }
 
@@ -293,9 +294,11 @@ MOS_STATUS CodechalDecodeHevcG11::SetFrameStates ()
     }
 
     CODECHAL_DECODE_CHK_STATUS_RETURN(CheckAndCopyBitstream());
-
-    PCODEC_REF_LIST destEntry = m_hevcRefList[m_hevcPicParams->CurrPic.FrameIdx];
-    MOS_ZeroMemory(destEntry, sizeof(CODEC_REF_LIST));
+    if (m_hevcPicParams->CurrPic.FrameIdx < CODECHAL_NUM_UNCOMPRESSED_SURFACE_HEVC)
+    {
+        PCODEC_REF_LIST destEntry = m_hevcRefList[m_hevcPicParams->CurrPic.FrameIdx];
+        MOS_ZeroMemory(destEntry, sizeof(CODEC_REF_LIST));
+    }
 
     if (m_incompletePicture)
     {
@@ -412,6 +415,18 @@ MOS_STATUS CodechalDecodeHevcG11::SetFrameStates ()
         // B, so in order to avoid this, declare all other pictures MIXED_TYPE.
         m_perfType = MIXED_TYPE;
     }
+    if (m_pCodechalOcaDumper)
+    {
+        m_pCodechalOcaDumper->SetHevcDecodeParam(
+            m_hevcPicParams,
+            m_hevcExtPicParams,
+            nullptr,
+            m_hevcSliceParams,
+            m_hevcExtSliceParams,
+            m_numSlices,
+            m_shortFormatInUse);
+    }
+
 
     m_crrPic = m_hevcPicParams->CurrPic;
     m_secondField =
@@ -537,6 +552,7 @@ MOS_STATUS CodechalDecodeHevcG11::EndStatusReport(
     uint32_t currIndex = m_decodeStatusBuf.m_currIndex;
 
     MHW_MI_STORE_REGISTER_MEM_PARAMS regParams;
+    MOS_ZeroMemory(&regParams, sizeof(regParams));
 
     //Frame CRC
     if (m_reportFrameCrc)
@@ -616,6 +632,8 @@ MOS_STATUS CodechalDecodeHevcG11::EndStatusReportForFE(
         sizeof(uint32_t) * 2;
 
     MHW_MI_STORE_REGISTER_MEM_PARAMS regParams;
+    MOS_ZeroMemory(&regParams, sizeof(regParams));
+
     regParams.presStoreBuffer = &m_decodeStatusBuf.m_statusBuffer;
     regParams.dwOffset = errStatusOffset;
     regParams.dwRegister = mmioRegistersHcp ?
@@ -651,6 +669,7 @@ MOS_STATUS CodechalDecodeHevcG11::SetAndPopulateVEHintParams(
     if (static_cast<MhwVdboxMfxInterfaceG11*>(m_mfxInterface)->IsScalabilitySupported() && MOS_VE_SUPPORTED(m_osInterface))
     {
         CODECHAL_DECODE_SCALABILITY_SETHINT_PARMS scalSetParms;
+        MOS_ZeroMemory(&scalSetParms, sizeof(CODECHAL_DECODE_SCALABILITY_SETHINT_PARMS));
         if (!MOS_VE_CTXBASEDSCHEDULING_SUPPORTED(m_osInterface))
         {
             scalSetParms.bNeedSyncWithPrevious       = true;
@@ -1632,10 +1651,12 @@ MOS_STATUS CodechalDecodeHevcG11::DecodePrimitiveLevel()
     {
         submitCommand = CodecHalDecodeScalabilityIsToSubmitCmdBuffer(m_scalabilityState);
 
+        HalOcaInterface::DumpCodechalParam(scdryCmdBuffer, (MOS_CONTEXT_HANDLE)m_osInterface->pOsContext, m_pCodechalOcaDumper, CODECHAL_HEVC);
         HalOcaInterface::On1stLevelBBEnd(scdryCmdBuffer, *m_osInterface);
     }
     else
     {
+        HalOcaInterface::DumpCodechalParam(primCmdBuffer, (MOS_CONTEXT_HANDLE)m_osInterface->pOsContext, m_pCodechalOcaDumper, CODECHAL_HEVC);
         HalOcaInterface::On1stLevelBBEnd(primCmdBuffer, *m_osInterface);
     }
     if (submitCommand)
@@ -1835,7 +1856,7 @@ CodechalDecodeHevcG11::CodechalDecodeHevcG11(
 
     CODECHAL_DECODE_CHK_NULL_NO_STATUS_RETURN(m_osInterface);
 
-     Mos_CheckVirtualEngineSupported(m_osInterface, true, true);
+     m_osInterface->pfnVirtualEngineSupported(m_osInterface, true, true);
 }
 
 #if USE_CODECHAL_DEBUG_TOOL

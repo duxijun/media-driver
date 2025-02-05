@@ -140,7 +140,7 @@ protected:
     //! \return   VAStatus
     //!           VA_STATUS_SUCCESS if success, else fail reason
     //!
-    VAStatus ParseSeqParams(void *ptr);
+    virtual VAStatus ParseSeqParams(void *ptr);
 
     //!
     //! \brief    Parse Slice Parameter buffer to Encode Context
@@ -293,6 +293,7 @@ private:
         bool ret = false;
 
         if (Media_Format_A8R8G8B8 == rawSurface->format ||
+           Media_Format_X8R8G8B8 == rawSurface->format  ||
            Media_Format_B10G10R10A2 == rawSurface->format)
         {
             ret = true;
@@ -300,6 +301,7 @@ private:
 
         if (ret && 
             (Media_Format_A8R8G8B8 == reconSurface->format ||
+            Media_Format_X8R8G8B8 == reconSurface->format ||
             Media_Format_B10G10R10A2 == reconSurface->format))
         {
             ret = false;

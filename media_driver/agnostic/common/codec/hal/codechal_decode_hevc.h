@@ -494,6 +494,8 @@ public:
     MOS_STATUS DumpIQParams(
         PCODECHAL_HEVC_IQ_MATRIX_PARAMS matrixData);
 
+    MOS_STATUS DumpHucS2l(PMHW_VDBOX_HUC_DMEM_STATE_PARAMS hucDmemStateParams);
+
 #endif
 
     static const uint32_t  m_hucS2lKernelId = 1;             //!< VDBox Huc decode S2L kernel descriptoer
@@ -537,7 +539,7 @@ public:
     MOS_RESOURCE     m_resSaoTileLineBuffer;                            //!< Handle of SAO Tile Line data buffer
     MOS_RESOURCE     m_resSaoTileColumnBuffer;                          //!< Handle of SAO Tile Column data buffer
     bool             m_mvBufferProgrammed;                              //!< Indicate mv buffer is programmed
-    MOS_RESOURCE     m_resMvTemporalBuffer[CODEC_NUM_HEVC_MV_BUFFERS];  //!< Handles of MV Temporal data buffer
+    MOS_RESOURCE     m_resMvTemporalBuffer[CODECHAL_NUM_UNCOMPRESSED_SURFACE_HEVC];  //!< Handles of MV Temporal data buffer, only use CODEC_NUM_HEVC_MV_BUFFERS normally
     uint32_t         m_secondLevelBatchBufferIndex;
     MHW_BATCH_BUFFER m_secondLevelBatchBuffer[CODEC_HEVC_NUM_SECOND_BB];//!< Handle of second level batch buffer
     uint32_t         m_dmemBufferIdx;                                   //!< Indicate current idx of DMEM buffer to program
@@ -583,6 +585,7 @@ public:
     bool                         m_dummyReferenceSlot[CODECHAL_MAX_CUR_NUM_REF_FRAME_HEVC];
 
     bool m_reportHucStatus = false;
+    bool m_reportHucCriticalError = false;
 };
 
 #endif  // __CODECHAL_DECODER_HEVC_H__

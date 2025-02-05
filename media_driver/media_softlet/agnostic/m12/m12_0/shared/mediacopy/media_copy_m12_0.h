@@ -29,7 +29,12 @@
 #define __MEDIA_COPY_M12_0_H__
 
 #include "media_copy.h"
-#include "media_blt_copy.h"
+#include "mos_defs.h"
+#include "mos_os_specific.h"
+
+class VeboxCopyState;
+class BltState;
+class MhwInterfaces;
 
 class MediaCopyStateM12_0: public MediaCopyBaseState
 {
@@ -46,6 +51,7 @@ public:
     //!
     //! \brief    init function.
     virtual MOS_STATUS Initialize(  PMOS_INTERFACE  osInterface, MhwInterfaces *mhwInterfaces);
+    using MediaCopyBaseState::Initialize;
 
     //!
     //! \brief    render format support.
@@ -113,8 +119,11 @@ protected:
     virtual MOS_STATUS MediaVeboxCopy(PMOS_RESOURCE src, PMOS_RESOURCE dst);
 
     virtual bool IsVeboxCopySupported(PMOS_RESOURCE src, PMOS_RESOURCE dst);
+    virtual MOS_STATUS TaskDispatch(MCPY_STATE_PARAMS mcpySrc, MCPY_STATE_PARAMS mcpyDst, MCPY_ENGINE mcpyEngine);
 
-    BltState        * m_bltState       = nullptr;
-    VeboxCopyState  * m_veboxCopyState = nullptr;
+    MhwInterfaces   *m_mhwInterfaces  = nullptr;
+    BltState        *m_bltState       = nullptr;
+    VeboxCopyState  *m_veboxCopyState = nullptr;
+    MEDIA_CLASS_DEFINE_END(MediaCopyStateM12_0)
 };
 #endif // __MEDIA_COPY_M12_0_H__

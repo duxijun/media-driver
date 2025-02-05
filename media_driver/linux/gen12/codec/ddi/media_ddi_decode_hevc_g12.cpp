@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2015-2020, Intel Corporation
+* Copyright (c) 2015-2023, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -89,6 +89,11 @@ VAStatus DdiDecodeHEVCG12::ParseSliceParams(
         }
         else
         {
+            if (m_decodeErrorFlag)
+            {
+                /* If error occurs in current GOP (m_decodeErrorFlag is true), set slice_temporal_mvp_enabled_flag = 0 to avoid GPU hang */
+                codecSlcParams->LongSliceFlags.fields.slice_temporal_mvp_enabled_flag = 0;
+            }
             codecSlcParams->slice_data_size   = slc->slice_data_size;
             codecSlcParams->slice_data_offset = sliceBaseOffset + slc->slice_data_offset;
             if (slcBase->slice_data_flag)
@@ -199,6 +204,7 @@ VAStatus DdiDecodeHEVCG12::ParseSliceParams(
         }
         codecSlcParams++;
     }
+
     return VA_STATUS_SUCCESS;
 }
 
@@ -349,6 +355,12 @@ VAStatus DdiDecodeHEVCG12::ParsePicParams(
     codecPicParams->num_tile_columns_minus1 = picParamBase->num_tile_columns_minus1;
     codecPicParams->num_tile_rows_minus1    = picParamBase->num_tile_rows_minus1;
 
+    if (codecPicParams->IdrPicFlag)
+    {
+        /* Initiate m_decodeErrorFlag to false when it's an IDR picture */
+        m_decodeErrorFlag = false;
+    }
+
     for (i = 0; i < HEVC_NUM_MAX_TILE_COLUMN - 1; i++)
     {
         codecPicParams->column_width_minus1[i] = picParamBase->column_width_minus1[i];
@@ -429,6 +441,20 @@ VAStatus DdiDecodeHEVCG12::ParsePicParams(
         uint32_t uiCopySize = sizeof(codecPicParamsScc->PredictorPaletteEntries);
         MOS_SecureMemcpy(&codecPicParamsScc->PredictorPaletteEntries, uiCopySize, &picParamScc->predictor_palette_entries, uiCopySize);
     }
+
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    // Picture Info
+    DECODE_EVENTDATA_INFO_PICTUREVA eventData = {0};
+    uint32_t minCtbSize        = 1 << (codecPicParams->log2_min_luma_coding_block_size_minus3 + 3);
+    eventData.CodecFormat                   = m_ddiDecodeCtx->wMode;
+    eventData.FrameType                     = codecPicParams->IntraPicFlag == 1 ? I_TYPE : MIXED_TYPE;
+    eventData.PicStruct                     = FRAME_PICTURE;
+    eventData.Width                         = codecPicParams->PicWidthInMinCbsY * minCtbSize;
+    eventData.Height                        = codecPicParams->PicHeightInMinCbsY * minCtbSize;
+    eventData.Bitdepth                      = codecPicParams->bit_depth_luma_minus8 + 8;
+    eventData.ChromaFormat                  = codecPicParams->chroma_format_idc;  // 0-4:0:0; 1-4:2:0; 2-4:2:2; 3-4:4:4
+    MOS_TraceEvent(EVENT_DECODE_INFO_PICTUREVA, EVENT_TYPE_INFO, &eventData, sizeof(eventData), NULL, 0);
+#endif
 
     return VA_STATUS_SUCCESS;
 }
@@ -1106,4 +1132,4 @@ bool DdiDecodeHEVCG12::IsSccProfile()
 extern template class MediaDdiFactory<DdiMediaDecode, DDI_DECODE_CONFIG_ATTR>;
 
 static bool hevcRegistered =
-    MediaDdiFactory<DdiMediaDecode, DDI_DECODE_CONFIG_ATTR>::RegisterCodec<DdiDecodeHEVCG12>(DECODE_ID_HEVC_G12);
+    MediaDdiFactory<DdiMediaDecode, DDI_DECODE_CONFIG_ATTR>::RegisterCodec<DdiDecodeHEVCG12>(DECODE_ID_HEVC_REXT);

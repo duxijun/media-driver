@@ -27,7 +27,7 @@
 #ifndef __MOS_GPU_CONTEXT_NEXT_H__
 #define __MOS_GPU_CONTEXT_NEXT_H__
 
-#include "mos_os_next.h"
+#include "mos_os.h"
 
 class CmdBufMgrNext;
 class CommandBufferNext;
@@ -49,22 +49,6 @@ public:
     //! \brief  Destructor
     //!
     virtual ~GpuContextNext(){}
-
-    //!
-    //! \brief    Static entrypoint, get the gpu context object
-    //! \param    [in] gpuNode
-    //!           Gpu node
-    //! \param    [in] cmdBufMgr
-    //!           Command buffer manager
-    //! \param    [in] reusedContext
-    //!           Reused gpu context
-    //! \return   GpuContextNext*
-    //!           the os specific object for gpu context
-    //!
-    static class GpuContextNext* Create(
-        const MOS_GPU_NODE gpuNode,
-        CmdBufMgrNext      *cmdBufMgr,
-        GpuContextNext     *reusedContext);
 
     //!
     //! \brief    Clear gpu context
@@ -246,10 +230,12 @@ public:
     {
         return MOS_STATUS_SUCCESS;
     }
+    
+    virtual MOS_GPU_COMPONENT_ID GetGpuComponentId() = 0;
 
 protected:
     //! \brief    Hardware node for current gpu context
-    MOS_GPU_NODE m_nodeOrdinal;
+    MOS_GPU_NODE m_nodeOrdinal = {};
 
     //! \brief    Indirect heap size (SSH area in DMA buffer)
     uint32_t m_IndirectHeapSize = 0;
@@ -267,9 +253,10 @@ protected:
     MOS_RESOURCE_HANDLE m_statusBufferResource = nullptr;
 
     //! \brief    Track the GPU Context Client Info
-    MOS_GPU_CONTEXT m_gpuContext;
+    MOS_GPU_CONTEXT m_gpuContext = MOS_GPU_CONTEXT_INVALID_HANDLE;
 
     //! \brief    VE attribute buffer
     MOS_CMD_BUF_ATTRI_VE m_bufAttriVe = {};
+MEDIA_CLASS_DEFINE_END(GpuContextNext)
 };
 #endif  // #ifndef __MOS_GPU_CONTEXT_NEXT_H__

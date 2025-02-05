@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2011-2017, Intel Corporation
+* Copyright (c) 2011-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -4320,7 +4320,7 @@ MOS_STATUS CodechalEncodeAvcEncFeiG8::InitKernelStateMe()
 
     CODECHAL_ENCODE_CHK_STATUS_RETURN(CodecHalEncode_CreateMDFKernelResource(this, kernelRes, 2, m_mdfMeBufSize, m_mdfMeSurfSize, m_mdfMeVmeSurfSize, m_feiMeCurbeDataSize));
     uint32_t codeSize;
-    CODECHAL_ENCODE_CHK_STATUS_RETURN(MOS_ReadFileToPtr(strMeIsaName, &codeSize, &kernelRes->pCommonISA));
+    CODECHAL_ENCODE_CHK_STATUS_RETURN(MosUtilities::MosReadFileToPtr(strMeIsaName, &codeSize, &kernelRes->pCommonISA));
 
     CODECHAL_ENCODE_CHK_STATUS_RETURN(pCmDev->LoadProgram(kernelRes->pCommonISA, codeSize, kernelRes->pCmProgram, "-nojitter"));
     CODECHAL_ENCODE_CHK_STATUS_RETURN(pCmDev->CreateKernel(kernelRes->pCmProgram, "HME_P", kernelRes->ppKernel[0]));
@@ -4341,7 +4341,7 @@ MOS_STATUS CodechalEncodeAvcEncFeiG8::InitKernelStateScaling(PCODECHAL_ENCODER a
     CodecHalEncode_CreateMDFKernelResource(this, kernelRes, 6, m_mdfDsBufSize * 3, m_mdfDsSurfSize * 3, m_mdfDsVmeSurfSize, 0);
 
     uint32_t codeSize;
-    CODECHAL_ENCODE_CHK_STATUS_RETURN(MOS_ReadFileToPtr(strDsIsaName, &codeSize, &kernelRes->pCommonISA));
+    CODECHAL_ENCODE_CHK_STATUS_RETURN(MosUtilities::MosReadFileToPtr(strDsIsaName, &codeSize, &kernelRes->pCommonISA));
     CODECHAL_ENCODE_CHK_STATUS_RETURN(avcEncoder->pCmDev->LoadProgram(kernelRes->pCommonISA, codeSize, kernelRes->pCmProgram, "-nojitter"));
     CODECHAL_ENCODE_CHK_STATUS_RETURN(avcEncoder->pCmDev->CreateKernel(kernelRes->pCmProgram, "hme_frame_downscale", kernelRes->ppKernel[0]));
     CODECHAL_ENCODE_CHK_STATUS_RETURN(avcEncoder->pCmDev->CreateKernel(kernelRes->pCmProgram, "hme_frame_downscale", kernelRes->ppKernel[1]));
@@ -4577,7 +4577,7 @@ MOS_STATUS CodechalEncodeAvcEncFeiG8::InitKernelStateMbEnc()
     auto kernelRes = &m_resMBEncKernel;
     CodecHalEncode_CreateMDFKernelResource(this, kernelRes, 3, m_mdfMbencBufSize, m_mdfMbencSurfSize, m_mdfMbencVmeSurfSize, m_feiMBEncCurbeDataSizeExcludeSurfaceIdx);
     uint32_t codeSize;
-    CODECHAL_ENCODE_CHK_STATUS_RETURN(MOS_ReadFileToPtr(strMbEncIsaName, &codeSize, &kernelRes->pCommonISA));
+    CODECHAL_ENCODE_CHK_STATUS_RETURN(MosUtilities::MosReadFileToPtr(strMbEncIsaName, &codeSize, &kernelRes->pCommonISA));
     CODECHAL_ENCODE_CHK_STATUS_RETURN(pCmDev->LoadProgram(kernelRes->pCommonISA, codeSize, kernelRes->pCmProgram, "-nojitter"));
     CODECHAL_ENCODE_CHK_STATUS_RETURN(pCmDev->CreateKernel(kernelRes->pCmProgram, "AVCEncMB_I", kernelRes->ppKernel[0]));
     CODECHAL_ENCODE_CHK_STATUS_RETURN(pCmDev->CreateKernel(kernelRes->pCmProgram, "AVCEncMB_P", kernelRes->ppKernel[1]));
@@ -4597,7 +4597,7 @@ MOS_STATUS CodechalEncodeAvcEncFeiG8::InitKernelStatePreProc()
     auto kernelRes = &m_resPreProcKernel;
     CodecHalEncode_CreateMDFKernelResource(this, kernelRes, 1, m_mdfPreProcBufSize, m_mdfPreProcSurfSize, m_mdfPreProcVmeSurfSize,m_feiPreProcCurbeDataSize);
     uint32_t codeSize;
-    CODECHAL_ENCODE_CHK_STATUS_RETURN(MOS_ReadFileToPtr(strPreProcIsaName, &codeSize, &kernelRes->pCommonISA));
+    CODECHAL_ENCODE_CHK_STATUS_RETURN(MosUtilities::MosReadFileToPtr(strPreProcIsaName, &codeSize, &kernelRes->pCommonISA));
     CODECHAL_ENCODE_CHK_STATUS_RETURN(pCmDev->LoadProgram(kernelRes->pCommonISA, codeSize, kernelRes->pCmProgram, "-nojitter"));
     CODECHAL_ENCODE_CHK_STATUS_RETURN(pCmDev->CreateKernel(kernelRes->pCmProgram, "FEI_PreEnc", kernelRes->ppKernel[0]));
 
@@ -6196,7 +6196,6 @@ MOS_STATUS CodechalEncodeAvcEncFeiG8::SendAvcMbEncSurfaces(PMOS_COMMAND_BUFFER c
     // FEI distortion surface
     if (feiPicParams->DistortionEnable)
     {
-        size = params->dwFrameWidthInMb * params->dwFrameFieldHeightInMb * 48;
         MOS_ZeroMemory(&surfaceCodecParams, sizeof(CODECHAL_SURFACE_CODEC_PARAMS));
         surfaceCodecParams.presBuffer = &(feiPicParams->resDistortion);
         surfaceCodecParams.dwOffset = 0;
@@ -6225,7 +6224,6 @@ MOS_STATUS CodechalEncodeAvcEncFeiG8::SendAvcMbEncSurfaces(PMOS_COMMAND_BUFFER c
             &surfaceCodecParams,
             kernelState));
 
-        size = params->dwFrameWidthInMb * params->dwFrameFieldHeightInMb + 3;
         MOS_ZeroMemory(&surfaceCodecParams, sizeof(CODECHAL_SURFACE_CODEC_PARAMS));
         surfaceCodecParams.presBuffer = &(feiPicParams->resMBQp);
         surfaceCodecParams.dwOffset = 0;
@@ -6399,8 +6397,8 @@ MOS_STATUS CodechalEncodeAvcEncFeiG8::PreProcKernel()
         &walkerParams,
         &walkerCodecParams));
 
-    HalOcaInterface::TraceMessage(cmdBuffer, *m_osInterface->pOsContext, __FUNCTION__, sizeof(__FUNCTION__));
-    HalOcaInterface::OnDispatch(cmdBuffer, *m_osInterface->pOsContext, *m_miInterface, *m_renderEngineInterface->GetMmioRegisters());
+    HalOcaInterface::TraceMessage(cmdBuffer, (MOS_CONTEXT_HANDLE)m_osInterface->pOsContext, __FUNCTION__, sizeof(__FUNCTION__));
+    HalOcaInterface::OnDispatch(cmdBuffer, *m_osInterface, *m_miInterface, *m_renderEngineInterface->GetMmioRegisters());
 
     CODECHAL_ENCODE_CHK_STATUS_RETURN(m_renderEngineInterface->AddMediaObjectWalkerCmd(
         &cmdBuffer,
@@ -6884,7 +6882,6 @@ MOS_STATUS CodechalEncodeAvcEncFeiG8::InitializeState()
     }
 
     bWeightedPredictionSupported = true;
-    m_brcHistoryBufferSize = m_brcHistoryBufferSize;
     dwBrcConstantSurfaceWidth = m_brcConstantSurfaceWidth;
     dwBrcConstantSurfaceHeight = m_brcConstantSurfaceHeight;
 
@@ -7191,6 +7188,7 @@ MOS_STATUS CodechalEncodeAvcEncFeiG8::SetCurbeAvcMbEnc(PCODECHAL_ENCODE_AVC_MBEN
         refWidth  = 64;
         refHeight = 32;
         lenSP     = 32;
+        break;
     case 8:
         // Exhaustive SUs 64x32 window
         refWidth  = 64;
@@ -7752,6 +7750,7 @@ MOS_STATUS CodechalEncodeAvcEncFeiG8::SetCurbeAvcPreProc(PCODECHAL_ENCODE_AVC_PR
         refWidth = 64;
         refHeight = 32;
         lenSP = 32;
+        break;
     case 8:
         // Exhaustive 48 SUs 64x32 window
         refWidth = 64;

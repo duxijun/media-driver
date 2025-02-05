@@ -48,7 +48,7 @@ public:
     //!         Pointer to CodechalDebugInterface
     //!
     Av1Pipeline(
-        CodechalHwInterface *   hwInterface,
+        CodechalHwInterfaceNext*   hwInterface,
         CodechalDebugInterface *debugInterface);
 
     virtual ~Av1Pipeline() {};
@@ -62,7 +62,6 @@ public:
     DeclareDecodePacketId(av1DecodePacketId);
     DeclareDecodePacketId(av1PictureSubPacketId);
     DeclareDecodePacketId(av1TileSubPacketId);
-    DeclareDecodePacketId(defaultCdfBufCopyPacketId);
 
 protected:
     //!
@@ -146,15 +145,17 @@ protected:
         //! \return   MOS_STATUS
         //!           MOS_STATUS_SUCCESS if success, else fail reason
         //!
-        MOS_STATUS DumpBitstreamControlParams(CodecAv1TileParams *tileParams);
+        MOS_STATUS DumpTileParams(CodecAv1TileParams *tileParams, uint32_t tileNum);
 #endif
 
 protected:
-    HucCopyPktItf  *m_cdfCopyPkt       = nullptr;          //!< Update default cdf buffer with huc stream out packet
     Av1DecodeMode  m_decodeMode       = baseDecodeMode;   //!< Decode mode
     uint16_t       m_passNum          = 1;                //!< Decode pass number
     bool           m_isFirstTileInFrm = true;             //!< First tile in the first frame
     bool           m_forceTileBasedDecoding = false;      //!< Force tile based decoding
+    bool           m_allowVirtualNodeReassign = false;            //!< Whether allow virtual node reassign
+
+MEDIA_CLASS_DEFINE_END(decode__Av1Pipeline)
 };
 
 }

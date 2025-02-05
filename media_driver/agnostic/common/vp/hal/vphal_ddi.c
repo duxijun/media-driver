@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2009-2021, Intel Corporation
+* Copyright (c) 2009-2023, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -158,7 +158,7 @@ bool VpHal_DdiProcAmpValuesNotDefault(VPHAL_PROCAMP_PARAMS ProcAmpParameters)
 //! \return   void
 //!
 void VpHal_DdiReportFeatureMode(
-    VphalState          *pVpHalState,
+    VpBase              *pVpHalState,
     PVP_CONFIG          pConfigValues)
 {
     VphalFeatureReport* pReport;
@@ -192,6 +192,9 @@ void VpHal_DdiReportFeatureMode(
     // Report Output Pipe
     pConfigValues->dwCurrentOutputPipeMode = pReport->GetFeatures().outputPipeMode;
 
+    // Report HDR Mode
+    pConfigValues->dwCurrentHdrMode = pReport->GetFeatures().hdrMode;
+
     // Report VE Feature In Use
     pConfigValues->dwCurrentVEFeatureInUse = pReport->GetFeatures().veFeatureInUse;
 
@@ -214,8 +217,15 @@ void VpHal_DdiReportFeatureMode(
     pConfigValues->dwCurrentCompositionMode = pReport->GetFeatures().compositionMode;
     pConfigValues->dwCurrentScdMode         = pReport->GetFeatures().diScdMode;
 
+    // Report Vebox Scalability
+    pConfigValues->dwCurrentVeboxScalability = pReport->GetFeatures().VeboxScalability;
+
+    // Report VP Apogeios
+    pConfigValues->dwCurrentVPApogeios       = pReport->GetFeatures().VPApogeios;
+
     VP_DDI_NORMALMESSAGE("VP Feature Report: \
         OutputPipeMode %d, \
+        HDRMode %d, \
         VEFeatureInUse %d, \
         ScalingMode %d, \
         DeinterlaceMode %d, \
@@ -226,6 +236,7 @@ void VpHal_DdiReportFeatureMode(
         PrimaryCompressMode %d, \
         CompositionMode %d",
         pReport->GetFeatures().outputPipeMode,
+        pReport->GetFeatures().hdrMode,
         pReport->GetFeatures().veFeatureInUse,
         pReport->GetFeatures().scalingMode,
         pReport->GetFeatures().deinterlaceMode,

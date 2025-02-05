@@ -128,7 +128,7 @@ public:
     //! \return   VAStatus
     //!           VA_STATUS_SUCCESS if successful, else fail reason
     //!
-    VAStatus ParseSeqParams(void *ptr);
+    virtual VAStatus ParseSeqParams(void *ptr);
 
     //!
     //! \brief    Parse slice parameters
@@ -527,6 +527,7 @@ private:
     inline bool NeedDisplayFormatSwizzle(DDI_MEDIA_SURFACE *rawSurface)
     {
         if (Media_Format_A8R8G8B8 == rawSurface->format ||
+            Media_Format_X8R8G8B8 == rawSurface->format ||
             Media_Format_B10G10R10A2 == rawSurface->format)
         {
             return true;

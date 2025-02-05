@@ -200,7 +200,7 @@ VAStatus DdiDecodeVC1::ParsePicParams(
     }
     uint32_t scaleFactor = 0;
     // See spec, table 40 && Figure 70
-    if ((picParam->b_picture_fraction >= 0) && (picParam->b_picture_fraction < 21))
+    if (picParam->b_picture_fraction < 21)
     {
         scaleFactor = FractionToScaleFactor[picParam->b_picture_fraction];
     }
@@ -349,7 +349,7 @@ VAStatus DdiDecodeVC1::ParsePicParams(
     if (picParam->mv_fields.bits.mv_mode == VAMvModeIntensityCompensation)
     {
         codecPicParam->mv_fields.UnifiedMvMode = (picParam->mv_fields.bits.mv_mode2 + 1) & 0x3;
-        ;
+        codecPicParam->picture_fields.intensity_compensation = 1;
     }
     else
     {

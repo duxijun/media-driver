@@ -48,20 +48,16 @@ if(GEN9_CFL)
     media_include_subdirectory(gen9_cfl)
 endif()
 
-if(GEN10)
-    media_include_subdirectory(gen10)
-endif()
-
-if(GEN10_CNL)
-    media_include_subdirectory(gen10_cnl)
-endif()
-
 if(GEN11)
     media_include_subdirectory(gen11)
 endif()
 
 if(GEN12)
     media_include_subdirectory(gen12)
+endif()
+
+if(XEHP_SDV OR DG2 OR PVC)
+    media_include_subdirectory(Xe_M)
 endif()
 
 include(${MEDIA_EXT}/linux/media_srcs_ext.cmake OPTIONAL)

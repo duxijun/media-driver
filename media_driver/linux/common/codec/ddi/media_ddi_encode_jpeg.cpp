@@ -531,11 +531,6 @@ VAStatus DdiEncodeJpeg::EncodeInCodecHal(uint32_t numSlices)
     rawSurface.dwOffset = 0;
 
     DdiMedia_MediaSurfaceToMosResource(rtTbl->pCurrentRT, &(rawSurface.OsResource));
-    // Recon Surface
-    MOS_SURFACE reconSurface;
-    MOS_ZeroMemory(&reconSurface, sizeof(MOS_SURFACE));
-    reconSurface.Format   = Format_Invalid;
-    reconSurface.dwOffset = 0;
 
     encodeParams.bJpegQuantMatrixSent = m_quantSupplied;
 
@@ -546,7 +541,7 @@ VAStatus DdiEncodeJpeg::EncodeInCodecHal(uint32_t numSlices)
     bitstreamSurface.Format = Format_Buffer;
 
     encodeParams.psRawSurface        = &rawSurface;
-    encodeParams.psReconSurface      = &reconSurface;
+    encodeParams.psReconSurface      = nullptr;
     encodeParams.presBitstreamBuffer = &bitstreamSurface;
 
     encodeParams.pPicParams       = m_encodeCtx->pPicParams;
@@ -620,6 +615,10 @@ VAStatus DdiEncodeJpeg::DefaultQmatrix()
     uint32_t quality = 0;
     if (picParams->m_quality < 50)
     {
+        if(picParams->m_quality == 0)
+        {
+            return VA_STATUS_ERROR_INVALID_PARAMETER;
+        }
         quality = 5000 / picParams->m_quality;
     }
     else

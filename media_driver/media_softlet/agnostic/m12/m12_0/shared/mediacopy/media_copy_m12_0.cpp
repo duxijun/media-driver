@@ -26,6 +26,13 @@
 //!
 
 #include "media_copy_m12_0.h"
+#include "media_vebox_copy.h"
+#include "media_blt_copy.h"
+#include "media_interfaces_mhw.h"
+#include "mos_os.h"
+#include "mos_resource_defs.h"
+#include "mos_utilities.h"
+class MhwInterfaces;
 
 MediaCopyStateM12_0::MediaCopyStateM12_0() :
     MediaCopyBaseState()
@@ -33,7 +40,7 @@ MediaCopyStateM12_0::MediaCopyStateM12_0() :
 
 }
 
-MOS_STATUS MediaCopyStateM12_0::Initialize(  PMOS_INTERFACE  osInterface, MhwInterfaces *mhwInterfaces)
+MOS_STATUS MediaCopyStateM12_0::Initialize(PMOS_INTERFACE  osInterface, MhwInterfaces *mhwInterfaces)
 {
     MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
 
@@ -43,7 +50,7 @@ MOS_STATUS MediaCopyStateM12_0::Initialize(  PMOS_INTERFACE  osInterface, MhwInt
     m_osInterface   = osInterface;
     m_mhwInterfaces = mhwInterfaces;
 
-    MCPY_CHK_STATUS_RETURN(MediaCopyBaseState::Initialize(osInterface, mhwInterfaces));
+    MCPY_CHK_STATUS_RETURN(MediaCopyBaseState::Initialize(osInterface));
 
     // blt init
     if ( nullptr == m_bltState )
@@ -66,6 +73,26 @@ MediaCopyStateM12_0::~MediaCopyStateM12_0()
 {
     MOS_Delete(m_bltState);
     MOS_Delete(m_veboxCopyState);
+    if (m_mhwInterfaces)
+    {
+        if (m_mhwInterfaces->m_cpInterface)
+        {
+            if (m_osInterface)
+            {
+                m_osInterface->pfnDeleteMhwCpInterface(m_mhwInterfaces->m_cpInterface);
+                m_mhwInterfaces->m_cpInterface = nullptr;
+            }
+            else
+            {
+                MCPY_ASSERTMESSAGE("Failed to destroy cpInterface.");
+            }
+        }
+        MOS_Delete(m_mhwInterfaces->m_miInterface);
+        MOS_Delete(m_mhwInterfaces->m_veboxInterface);
+        MOS_Delete(m_mhwInterfaces->m_bltInterface);
+        MOS_Delete(m_mhwInterfaces);
+        m_mhwInterfaces = nullptr;
+    }
 }
 
 bool MediaCopyStateM12_0::RenderFormatSupportCheck(PMOS_RESOURCE src, PMOS_RESOURCE dst)
@@ -114,7 +141,7 @@ bool MediaCopyStateM12_0::IsVeboxCopySupported(PMOS_RESOURCE src, PMOS_RESOURCE 
 
     if (m_veboxCopyState)
     {
-        supported = m_veboxCopyState->IsFormatSupported(src) && m_veboxCopyState->IsFormatSupported(dst);
+        supported = m_veboxCopyState->IsSurfaceSupported(src) && m_veboxCopyState->IsSurfaceSupported(dst);
     }
 
     if (src->TileType == MOS_TILE_LINEAR &&
@@ -141,3 +168,59 @@ MOS_STATUS MediaCopyStateM12_0::MediaRenderCopy(PMOS_RESOURCE src, PMOS_RESOURCE
     return MOS_STATUS_UNIMPLEMENTED;
 }
 
+MOS_STATUS MediaCopyStateM12_0::TaskDispatch(MCPY_STATE_PARAMS mcpySrc, MCPY_STATE_PARAMS mcpyDst, MCPY_ENGINE mcpyEngine)
+{
+    MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
+    MosUtilities::MosLockMutex(m_inUseGPUMutex);
+    switch (mcpyEngine)
+    {
+    case MCPY_ENGINE_VEBOX:
+        eStatus = MediaVeboxCopy(mcpySrc.OsRes, mcpyDst.OsRes);
+        break;
+    case MCPY_ENGINE_BLT:
+        if ((mcpySrc.TileMode != MOS_TILE_LINEAR) && (mcpySrc.CompressionMode != MOS_MMC_DISABLED))
+        {
+            MCPY_NORMALMESSAGE("mmc on, mcpySrc.TileMode= %d, mcpySrc.CompressionMode = %d", mcpySrc.TileMode, mcpySrc.CompressionMode);
+            eStatus = m_osInterface->pfnDecompResource(m_osInterface, mcpySrc.OsRes);
+            if (MOS_STATUS_SUCCESS != eStatus)
+            {
+                MosUtilities::MosUnlockMutex(m_inUseGPUMutex);
+                MCPY_CHK_STATUS_RETURN(eStatus);
+            }
+        }
+        if ((mcpyDst.TileMode != MOS_TILE_LINEAR) && (mcpyDst.CompressionMode == MOS_MMC_RC))
+        {
+            MCPY_NORMALMESSAGE("mmc on, mcpyDst.TileMode= %d, mcpyDst.CompressionMode = %d", mcpyDst.TileMode, mcpyDst.CompressionMode);
+            eStatus = m_osInterface->pfnDecompResource(m_osInterface, mcpyDst.OsRes);
+            if (MOS_STATUS_SUCCESS != eStatus)
+            {
+                MosUtilities::MosUnlockMutex(m_inUseGPUMutex);
+                MCPY_CHK_STATUS_RETURN(eStatus);
+            }
+        }
+        eStatus = MediaBltCopy(mcpySrc.OsRes, mcpyDst.OsRes);
+        break;
+    case MCPY_ENGINE_RENDER:
+        eStatus = MediaRenderCopy(mcpySrc.OsRes, mcpyDst.OsRes);
+        break;
+    default:
+        break;
+    }
+    MosUtilities::MosUnlockMutex(m_inUseGPUMutex);
+
+#if (_DEBUG || _RELEASE_INTERNAL)
+    if (m_bRegReport)
+    {
+        std::string               copyEngine     = mcpyEngine ? (mcpyEngine == MCPY_ENGINE_BLT ? "BLT" : "Render") : "VeBox";
+        MediaUserSettingSharedPtr userSettingPtr = m_osInterface->pfnGetUserSettingInstance(m_osInterface);
+        ReportUserSettingForDebug(
+            userSettingPtr,
+            __MEDIA_USER_FEATURE_MCPY_MODE,
+            copyEngine,
+            MediaUserSetting::Group::Device);
+    }
+#endif
+    MCPY_NORMALMESSAGE("Media Copy works on %s Engine", mcpyEngine ? (mcpyEngine == MCPY_ENGINE_BLT ? "BLT" : "Render") : "VeBox");
+
+    return eStatus;
+}

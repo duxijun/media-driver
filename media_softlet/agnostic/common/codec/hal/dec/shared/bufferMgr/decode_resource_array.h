@@ -157,7 +157,10 @@ private:
             {
                 continue;
             }
-            DECODE_CHK_STATUS(m_allocator->Destroy(resource));
+            if (m_allocator != nullptr)
+            {
+                DECODE_CHK_STATUS(m_allocator->Destroy(resource));
+            }
         }
 
         m_resourceQueue.clear();
@@ -172,6 +175,8 @@ private:
     uint32_t m_nextIndex  = 0;
 
     T* m_empty = nullptr;
+
+MEDIA_CLASS_DEFINE_END(decode__ResourceArray)
 };
 
 }  // namespace decode

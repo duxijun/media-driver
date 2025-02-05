@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2011-2017, Intel Corporation
+* Copyright (c) 2011-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -2855,7 +2855,7 @@ MOS_STATUS CodechalEncodeAvcEncFeiG9::InitKernelStateMe()
 
     CODECHAL_ENCODE_CHK_STATUS_RETURN(CodecHalEncode_CreateMDFKernelResource(this, kernelRes, 2, m_mdfMeBufSize, m_mdfMeSurfSize, m_mdfMeVmeSurfSize, m_meCurbeDataSizeFei));
     uint32_t codeSize;
-    CODECHAL_ENCODE_CHK_STATUS_RETURN(MOS_ReadFileToPtr(strMeIsaName, (uint32_t*)&codeSize, &kernelRes->pCommonISA));
+    CODECHAL_ENCODE_CHK_STATUS_RETURN(MosUtilities::MosReadFileToPtr(strMeIsaName, (uint32_t*)&codeSize, &kernelRes->pCommonISA));
 
     CODECHAL_ENCODE_CHK_STATUS_RETURN(pCmDev->LoadProgram(kernelRes->pCommonISA, codeSize, kernelRes->pCmProgram, "-nojitter"));
     CODECHAL_ENCODE_CHK_STATUS_RETURN(pCmDev->CreateKernel(kernelRes->pCmProgram, "HME_P", kernelRes->ppKernel[0]));
@@ -2876,7 +2876,7 @@ MOS_STATUS CodechalEncodeAvcEncFeiG9::InitKernelStateScaling(PCODECHAL_ENCODER a
     CodecHalEncode_CreateMDFKernelResource(this, kernelRes, 6, m_mdfDsBufSize * 3, m_mdfDsSurfSize * 3, m_mdfDsVmeSurfSize, 0);
 
     uint32_t codeSize;
-    CODECHAL_ENCODE_CHK_STATUS_RETURN(MOS_ReadFileToPtr(strDsIsaName, (uint32_t*)&codeSize, &kernelRes->pCommonISA));
+    CODECHAL_ENCODE_CHK_STATUS_RETURN(MosUtilities::MosReadFileToPtr(strDsIsaName, (uint32_t*)&codeSize, &kernelRes->pCommonISA));
     CODECHAL_ENCODE_CHK_STATUS_RETURN(avcEncoder->pCmDev->LoadProgram(kernelRes->pCommonISA, codeSize, kernelRes->pCmProgram, "-nojitter"));
     CODECHAL_ENCODE_CHK_STATUS_RETURN(avcEncoder->pCmDev->CreateKernel(kernelRes->pCmProgram, "hme_frame_downscale", kernelRes->ppKernel[0]));
     CODECHAL_ENCODE_CHK_STATUS_RETURN(avcEncoder->pCmDev->CreateKernel(kernelRes->pCmProgram, "hme_frame_downscale", kernelRes->ppKernel[1]));
@@ -3106,7 +3106,7 @@ MOS_STATUS CodechalEncodeAvcEncFeiG9::InitKernelStatePreProc()
     auto kernelRes = &m_resPreProcKernel;
     CodecHalEncode_CreateMDFKernelResource(this, kernelRes, 1, m_mdfPreProcBufSize, m_mdfPreProcSurfSize, m_mdfPreProcVmeSurfSize,m_preProcCurbeDataSizeFei);
     uint32_t codeSize;
-    CODECHAL_ENCODE_CHK_STATUS_RETURN(MOS_ReadFileToPtr(strPreProcIsaName, (uint32_t*)&codeSize, &kernelRes->pCommonISA));
+    CODECHAL_ENCODE_CHK_STATUS_RETURN(MosUtilities::MosReadFileToPtr(strPreProcIsaName, (uint32_t*)&codeSize, &kernelRes->pCommonISA));
     CODECHAL_ENCODE_CHK_STATUS_RETURN(pCmDev->LoadProgram(kernelRes->pCommonISA, codeSize, kernelRes->pCmProgram, "-nojitter"));
     CODECHAL_ENCODE_CHK_STATUS_RETURN(pCmDev->CreateKernel(kernelRes->pCmProgram, "FEI_PreEnc", kernelRes->ppKernel[0]));
 
@@ -3621,8 +3621,8 @@ MOS_STATUS CodechalEncodeAvcEncFeiG9::PreProcKernel()
         &walkerParams,
         &walkerCodecParams));
 
-    HalOcaInterface::TraceMessage(cmdBuffer, *m_osInterface->pOsContext, __FUNCTION__, sizeof(__FUNCTION__));
-    HalOcaInterface::OnDispatch(cmdBuffer, *m_osInterface->pOsContext, *m_miInterface, *m_renderEngineInterface->GetMmioRegisters());
+    HalOcaInterface::TraceMessage(cmdBuffer, (MOS_CONTEXT_HANDLE)m_osInterface->pOsContext, __FUNCTION__, sizeof(__FUNCTION__));
+    HalOcaInterface::OnDispatch(cmdBuffer, *m_osInterface, *m_miInterface, *m_renderEngineInterface->GetMmioRegisters());
 
     CODECHAL_ENCODE_CHK_STATUS_RETURN(m_renderEngineInterface->AddMediaObjectWalkerCmd(
         &cmdBuffer,
@@ -4422,6 +4422,7 @@ MOS_STATUS CodechalEncodeAvcEncFeiG9::SetCurbeAvcMbEnc(PCODECHAL_ENCODE_AVC_MBEN
         refWidth = 64;
         refHeight = 32;
         lenSP = 32;
+        break;
     case 8:
         // Exhaustive - 48 SUs 64x32 window
         refWidth = 64;
@@ -5119,6 +5120,7 @@ MOS_STATUS CodechalEncodeAvcEncFeiG9::SetCurbeAvcPreProc(PCODECHAL_ENCODE_AVC_PR
         refWidth = 64;
         refHeight = 32;
         lenSP = 32;
+        break;
     case 8:
         // Exhaustive 48 SUs 64x32 window
         refWidth = 64;
@@ -6196,7 +6198,6 @@ MOS_STATUS CodechalEncodeAvcEncFeiG9::SendAvcMbEncSurfaces(PMOS_COMMAND_BUFFER c
     // FEI distortion surface
     if (feiPicParams->DistortionEnable)
     {
-        size = params->dwFrameWidthInMb * params->dwFrameFieldHeightInMb * 48;
         MOS_ZeroMemory(&surfaceCodecParams, sizeof(CODECHAL_SURFACE_CODEC_PARAMS));
         surfaceCodecParams.presBuffer = &(feiPicParams->resDistortion);
         surfaceCodecParams.dwOffset = 0;
@@ -6225,7 +6226,6 @@ MOS_STATUS CodechalEncodeAvcEncFeiG9::SendAvcMbEncSurfaces(PMOS_COMMAND_BUFFER c
             &surfaceCodecParams,
             kernelState));
 
-        size = params->dwFrameWidthInMb * params->dwFrameFieldHeightInMb + 3;
         MOS_ZeroMemory(&surfaceCodecParams, sizeof(CODECHAL_SURFACE_CODEC_PARAMS));
         surfaceCodecParams.presBuffer = &(feiPicParams->resMBQp);
         surfaceCodecParams.dwOffset = 0;
@@ -6471,6 +6471,8 @@ MOS_STATUS CodechalEncodeAvcEncFeiG9::SendAvcMfeMbEncSurfaces(PMOS_COMMAND_BUFFE
     CODECHAL_ENCODE_FUNCTION_ENTER;
 
     CODECHAL_ENCODE_CHK_NULL_RETURN(m_cmDev);
+    CODECHAL_ENCODE_CHK_NULL_RETURN(m_resMbencKernel);
+    CODECHAL_ENCODE_CHK_NULL_RETURN(m_cmSurfIdx);
 
     auto kernelRes   = m_resMbencKernel;
     auto cmSurfaces  = m_cmSurfIdx;
@@ -6707,10 +6709,10 @@ MOS_STATUS CodechalEncodeAvcEncFeiG9::SendAvcMfeMbEncSurfaces(PMOS_COMMAND_BUFFE
         }
     }
 
-    m_cmDev->CreateVmeSurfaceG7_5(cmSurfForVME, &surfArrayL0[0], &surfArrayL1[0], refNum0, refNum1, cmVmeSurfIdx[0 + vmeIdx]);
+    CODECHAL_ENCODE_CHK_STATUS_RETURN(m_cmDev->CreateVmeSurfaceG7_5(cmSurfForVME, &surfArrayL0[0], &surfArrayL1[0], refNum0, refNum1, cmVmeSurfIdx[0 + vmeIdx]));
     cmSurfaces->MBVMEInterPredictionSurfIndex = cmVmeSurfIdx[0 + vmeIdx];
 
-    m_cmDev->CreateVmeSurfaceG7_5(cmSurfForVME, &surfArrayL1[0], &surfArrayL1[0], refNum1, refNum1, cmVmeSurfIdx[1 + vmeIdx]);
+    CODECHAL_ENCODE_CHK_STATUS_RETURN(m_cmDev->CreateVmeSurfaceG7_5(cmSurfForVME, &surfArrayL1[0], &surfArrayL1[0], refNum1, refNum1, cmVmeSurfIdx[1 + vmeIdx]));
     cmSurfaces->MBVMEInterPredictionMRSurfIndex = cmVmeSurfIdx[1 + vmeIdx];
 
     CM_VME_SURFACE_STATE_PARAM vmeDimensionParam;

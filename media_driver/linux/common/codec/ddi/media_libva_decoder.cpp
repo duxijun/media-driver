@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2009-2021, Intel Corporation
+* Copyright (c) 2009-2023, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -38,7 +38,7 @@
 #include "mos_solo_generic.h"
 #include "media_ddi_factory.h"
 #include "media_ddi_decode_base.h"
-#include "media_interfaces.h"
+#include "media_factory.h"
 #include "media_ddi_decode_const.h"
 #include "decode_status_report.h"
 #include "vphal_render_vebox_memdecomp.h"
@@ -50,8 +50,14 @@
 #include <linux/fb.h>
 
 typedef MediaDdiFactory<DdiMediaDecode, DDI_DECODE_CONFIG_ATTR> DdiDecodeFactory;
+
 static int32_t DdiDecode_GetDisplayInfo(VADriverContextP ctx)
 {
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        MOS_TraceEvent(EVENT_DECODE_DDI_DISPLAYINFOVA, EVENT_TYPE_START, NULL, 0, NULL, 0);
+    }
+#endif
     PDDI_MEDIA_CONTEXT mediaDrvCtx        = DdiMedia_GetMediaContext(ctx);
     int32_t fd                            = -1;
     struct fb_var_screeninfo              vsinfo;
@@ -59,7 +65,7 @@ static int32_t DdiDecode_GetDisplayInfo(VADriverContextP ctx)
     vsinfo.yres                           = 0;
 
     fd = open("/dev/graphics/fb0",O_RDONLY);
-    if(fd > 0)
+    if(fd >= 0)
     {
         if(ioctl(fd, FBIOGET_VSCREENINFO, &vsinfo) < 0)
         {
@@ -83,6 +89,14 @@ static int32_t DdiDecode_GetDisplayInfo(VADriverContextP ctx)
     DDI_NORMALMESSAGE("DDI:mediaDrvCtx->uiDisplayWidth =%d", mediaDrvCtx->uiDisplayWidth);
     DDI_NORMALMESSAGE("DDI:mediaDrvCtx->uiDisplayHeight =%d",mediaDrvCtx->uiDisplayHeight);
 
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        DECODE_EVENTDATA_VA_DISPLAYINFO eventData;
+        eventData.uiDisplayWidth    = mediaDrvCtx->uiDisplayWidth;
+        eventData.uiDisplayHeight    = mediaDrvCtx->uiDisplayHeight;
+        MOS_TraceEvent(EVENT_DECODE_DDI_DISPLAYINFOVA, EVENT_TYPE_END, &eventData, sizeof(eventData), NULL, 0);
+    }
+#endif
     return 0;
 }
 
@@ -96,11 +110,26 @@ VAStatus DdiDecode_CreateBuffer(
     VABufferID              *bufId
 )
 {
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        MOS_TraceEvent(EVENT_DECODE_DDI_CREATEBUFFERVA, EVENT_TYPE_START, NULL, 0, NULL, 0);
+    }
+#endif
     *bufId     = VA_INVALID_ID;
     if (decCtx->m_ddiDecode){
         DDI_CHK_RET(decCtx->m_ddiDecode->CreateBuffer(type, size, numElements, data, bufId),"DdiDecode_CreateBuffer failed!");
     }
 
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        DECODE_EVENTDATA_VA_CREATEBUFFER eventData;
+        eventData.type = type;
+        eventData.size = size;
+        eventData.numElements = numElements;
+        eventData.bufId = bufId;
+        MOS_TraceEvent(EVENT_DECODE_DDI_CREATEBUFFERVA, EVENT_TYPE_END, &eventData, sizeof(eventData), NULL, 0);
+    }
+#endif
     return VA_STATUS_SUCCESS;
 
 }
@@ -113,6 +142,13 @@ VAStatus DdiDecode_BeginPicture (
 {
     DDI_FUNCTION_ENTER();
 
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        DECODE_EVENTDATA_VA_BEGINPICTURE_START eventData;
+        eventData.FrameIndex    = DecodeFrameIndex;
+        MOS_TraceEvent(EVENT_DECODE_DDI_BEGINPICTUREVA, EVENT_TYPE_START, &eventData, sizeof(eventData), NULL, 0);
+    }
+#endif
     PERF_UTILITY_AUTO(__FUNCTION__, PERF_DECODE, PERF_LEVEL_DDI);
 
     uint32_t  ctxType;
@@ -128,6 +164,14 @@ VAStatus DdiDecode_BeginPicture (
     {
         VAStatus va = decCtx->m_ddiDecode->BeginPicture(ctx, context, renderTarget);
         DDI_FUNCTION_EXIT(va);
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        DECODE_EVENTDATA_VA_BEGINPICTURE eventData;
+        eventData.FrameIndex                  = DecodeFrameIndex;
+        eventData.hRes                        = va;
+        MOS_TraceEvent(EVENT_DECODE_DDI_BEGINPICTUREVA, EVENT_TYPE_END, &eventData, sizeof(eventData), NULL, 0);
+    }
+#endif
         return va;
     }
 
@@ -148,6 +192,13 @@ VAStatus DdiDecode_EndPicture (
 {
     DDI_FUNCTION_ENTER();
 
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        DECODE_EVENTDATA_VA_ENDPICTURE_START eventData;
+        eventData.FrameIndex = DecodeFrameIndex;
+        MOS_TraceEvent(EVENT_DECODE_DDI_ENDPICTUREVA, EVENT_TYPE_START, &eventData, sizeof(eventData), NULL, 0);
+    }
+#endif
     PERF_UTILITY_AUTO(__FUNCTION__, PERF_DECODE, PERF_LEVEL_DDI);
 
     DDI_CHK_NULL(ctx,                "nullptr context in vpgDecodeEndPicture!", VA_STATUS_ERROR_INVALID_CONTEXT);
@@ -164,6 +215,15 @@ VAStatus DdiDecode_EndPicture (
         {
             VAStatus va = decCtx->pCpDdiInterface->EndPicture(ctx, context);
             DDI_FUNCTION_EXIT(va);
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        DECODE_EVENTDATA_VA_ENDPICTURE eventData;
+        eventData.FrameIndex = DecodeFrameIndex;
+        eventData.hRes       = va;
+        MOS_TraceEvent(EVENT_DECODE_DDI_ENDPICTUREVA, EVENT_TYPE_END, &eventData, sizeof(eventData), NULL, 0);
+        DecodeFrameIndex++;
+    }
+#endif
             return va;
         }
     }
@@ -172,6 +232,15 @@ VAStatus DdiDecode_EndPicture (
     {
         VAStatus va = decCtx->m_ddiDecode->EndPicture(ctx, context);
         DDI_FUNCTION_EXIT(va);
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        DECODE_EVENTDATA_VA_ENDPICTURE eventData;
+        eventData.FrameIndex = DecodeFrameIndex;
+        eventData.hRes       = va;
+        MOS_TraceEvent(EVENT_DECODE_DDI_ENDPICTUREVA, EVENT_TYPE_END, &eventData, sizeof(eventData), NULL, 0);
+        DecodeFrameIndex++;
+    }
+#endif
         return va;
     }
 
@@ -190,6 +259,13 @@ VAStatus DdiDecode_RenderPicture (
     int32_t             numBuffers
 )
 {
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        DECODE_EVENTDATA_VA_RENDERPICTURE_START eventData;
+        eventData.buffers = buffers;
+        MOS_TraceEvent(EVENT_DECODE_DDI_RENDERPICTUREVA, EVENT_TYPE_START, &eventData, sizeof(eventData), NULL, 0);
+    }
+#endif
     VAStatus        va                      = VA_STATUS_SUCCESS;
     int32_t         numOfBuffers            = numBuffers;
     int32_t         priority                = 0;
@@ -230,6 +306,15 @@ VAStatus DdiDecode_RenderPicture (
     {
         va = decCtx->m_ddiDecode->RenderPicture(ctx, context, buffers, numOfBuffers);
         DDI_FUNCTION_EXIT(va);
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        DECODE_EVENTDATA_VA_RENDERPICTURE eventData;
+        eventData.buffers = buffers;
+        eventData.hRes    = va;
+        eventData.numBuffers = numBuffers;
+        MOS_TraceEvent(EVENT_DECODE_DDI_RENDERPICTUREVA, EVENT_TYPE_END, &eventData, sizeof(eventData), NULL, 0);
+    }
+#endif
         return va;
     }
 
@@ -249,6 +334,11 @@ void DdiDecodeCleanUp(
     VADriverContextP    ctx,
     PDDI_DECODE_CONTEXT decCtx)
 {
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        MOS_TraceEvent(EVENT_DECODE_DDI_CLEARUPVA, EVENT_TYPE_START, NULL, 0, NULL, 0);
+    }
+#endif
     if(decCtx)
     {
         if(decCtx->m_ddiDecode)
@@ -259,11 +349,21 @@ void DdiDecodeCleanUp(
             decCtx = nullptr;
         }
     }
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        MOS_TraceEvent(EVENT_DECODE_DDI_CLEARUPVA, EVENT_TYPE_END, NULL, 0, NULL, 0);
+    }
+#endif
     return;
 }
 
 VAStatus DdiDecode_StatusReport(PDDI_MEDIA_CONTEXT mediaCtx, CodechalDecode *decoder, DDI_MEDIA_SURFACE *surface)
 {
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        MOS_TraceEvent(EVENT_DECODE_DDI_STATUSREPORTVA, EVENT_TYPE_START, NULL, 0, NULL, 0);
+    }
+#endif
     if (decoder->IsStatusQueryReportingEnabled())
     {
         uint32_t i = 0;
@@ -303,16 +403,17 @@ VAStatus DdiDecode_StatusReport(PDDI_MEDIA_CONTEXT mediaCtx, CodechalDecode *dec
                     bo = (tempNewReport.m_deblockedPicResOlp.bo) ? tempNewReport.m_deblockedPicResOlp.bo : bo;
                 }
 
-                if ((tempNewReport.m_codecStatus == CODECHAL_STATUS_SUCCESSFUL) || (tempNewReport.m_codecStatus == CODECHAL_STATUS_ERROR) || (tempNewReport.m_codecStatus == CODECHAL_STATUS_INCOMPLETE))
+                if ((tempNewReport.m_codecStatus == CODECHAL_STATUS_SUCCESSFUL)     ||
+                    (tempNewReport.m_codecStatus == CODECHAL_STATUS_ERROR)          ||
+                    (tempNewReport.m_codecStatus == CODECHAL_STATUS_INCOMPLETE)     ||
+                    (tempNewReport.m_codecStatus == CODECHAL_STATUS_RESET))
                 {
                     PDDI_MEDIA_SURFACE_HEAP_ELEMENT mediaSurfaceHeapElmt = (PDDI_MEDIA_SURFACE_HEAP_ELEMENT)mediaCtx->pSurfaceHeap->pHeapBase;
 
                     uint32_t j = 0;
-                    for (j = 0; j < mediaCtx->pSurfaceHeap->uiAllocatedHeapElements; j++, mediaSurfaceHeapElmt++)
+                    for (j = 0; j < mediaCtx->pSurfaceHeap->uiAllocatedHeapElements && mediaSurfaceHeapElmt != nullptr; j++, mediaSurfaceHeapElmt++)
                     {
-                        if (mediaSurfaceHeapElmt != nullptr &&
-                                mediaSurfaceHeapElmt->pSurface != nullptr &&
-                                bo == mediaSurfaceHeapElmt->pSurface->bo)
+                        if (mediaSurfaceHeapElmt->pSurface != nullptr && bo == mediaSurfaceHeapElmt->pSurface->bo)
                         {
                             mediaSurfaceHeapElmt->pSurface->curStatusReport.decode.status = (uint32_t)tempNewReport.m_codecStatus;
                             mediaSurfaceHeapElmt->pSurface->curStatusReport.decode.errMbNum = (uint32_t)tempNewReport.m_numMbsAffected;
@@ -320,11 +421,6 @@ VAStatus DdiDecode_StatusReport(PDDI_MEDIA_CONTEXT mediaCtx, CodechalDecode *dec
                             mediaSurfaceHeapElmt->pSurface->curStatusReportQueryState = DDI_MEDIA_STATUS_REPORT_QUERY_STATE_COMPLETED;
                             break;
                         }
-                    }
-
-                    if (j == mediaCtx->pSurfaceHeap->uiAllocatedHeapElements)
-                    {
-                        return VA_STATUS_ERROR_OPERATION_FAILED;
                     }
                 }
                 else
@@ -335,6 +431,11 @@ VAStatus DdiDecode_StatusReport(PDDI_MEDIA_CONTEXT mediaCtx, CodechalDecode *dec
             }
         }
 
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        MOS_TraceEvent(EVENT_DECODE_DDI_STATUSREPORTVA, EVENT_TYPE_END, NULL, 0, NULL, 0);
+    }
+#endif
         // check the report ptr of current surface.
         if (surface->curStatusReportQueryState == DDI_MEDIA_STATUS_REPORT_QUERY_STATE_COMPLETED)
         {
@@ -346,7 +447,9 @@ VAStatus DdiDecode_StatusReport(PDDI_MEDIA_CONTEXT mediaCtx, CodechalDecode *dec
             {
                 return VA_STATUS_ERROR_DECODING_ERROR;
             }
-            else if (surface->curStatusReport.decode.status == CODECHAL_STATUS_INCOMPLETE || surface->curStatusReport.decode.status == CODECHAL_STATUS_UNAVAILABLE)
+            else if (surface->curStatusReport.decode.status == CODECHAL_STATUS_INCOMPLETE ||
+                     surface->curStatusReport.decode.status == CODECHAL_STATUS_RESET      ||
+                     surface->curStatusReport.decode.status == CODECHAL_STATUS_UNAVAILABLE)
             {
                 return mediaCtx->bMediaResetEnable ? VA_STATUS_SUCCESS : VA_STATUS_ERROR_HW_BUSY;
             }
@@ -361,53 +464,66 @@ VAStatus DdiDecode_StatusReport(PDDI_MEDIA_CONTEXT mediaCtx, CodechalDecode *dec
 
 VAStatus DdiDecode_StatusReport(PDDI_MEDIA_CONTEXT mediaCtx, DecodePipelineAdapter *decoder, DDI_MEDIA_SURFACE *surface)
 {
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        MOS_TraceEvent(EVENT_DECODE_DDI_STATUSREPORTVA, EVENT_TYPE_START, NULL, 0, NULL, 0);
+    }
+#endif
     if (surface->curStatusReportQueryState == DDI_MEDIA_STATUS_REPORT_QUERY_STATE_PENDING)
     {
         uint32_t uNumCompletedReport = decoder->GetCompletedReport();
-        DDI_CHK_CONDITION((uNumCompletedReport == 0),
-            "No report available at all", VA_STATUS_ERROR_OPERATION_FAILED);
-
-        for (uint32_t i = 0; i < uNumCompletedReport; i++)
+        if (uNumCompletedReport != 0)
         {
-            decode::DecodeStatusReportData tempNewReport;
-            MOS_ZeroMemory(&tempNewReport, sizeof(CodechalDecodeStatusReport));
-            MOS_STATUS eStatus = decoder->GetStatusReport(&tempNewReport, 1);
-            DDI_CHK_CONDITION(MOS_STATUS_SUCCESS != eStatus, "Get status report fail", VA_STATUS_ERROR_OPERATION_FAILED);
-
-            MOS_LINUX_BO *bo = tempNewReport.currDecodedPicRes.bo;
-
-            if ((tempNewReport.codecStatus == CODECHAL_STATUS_SUCCESSFUL) || (tempNewReport.codecStatus == CODECHAL_STATUS_ERROR) || (tempNewReport.codecStatus == CODECHAL_STATUS_INCOMPLETE))
+            for (uint32_t i = 0; i < uNumCompletedReport; i++)
             {
-                PDDI_MEDIA_SURFACE_HEAP_ELEMENT mediaSurfaceHeapElmt = (PDDI_MEDIA_SURFACE_HEAP_ELEMENT)mediaCtx->pSurfaceHeap->pHeapBase;
+                decode::DecodeStatusReportData tempNewReport;
+                MOS_ZeroMemory(&tempNewReport, sizeof(CodechalDecodeStatusReport));
+                MOS_STATUS eStatus = decoder->GetStatusReport(&tempNewReport, 1);
+                DDI_CHK_CONDITION(MOS_STATUS_SUCCESS != eStatus, "Get status report fail", VA_STATUS_ERROR_OPERATION_FAILED);
 
-                uint32_t j = 0;
-                for (j = 0; j < mediaCtx->pSurfaceHeap->uiAllocatedHeapElements; j++, mediaSurfaceHeapElmt++)
+                MOS_LINUX_BO *bo = tempNewReport.currDecodedPicRes.bo;
+
+                if ((tempNewReport.codecStatus == CODECHAL_STATUS_SUCCESSFUL)   ||
+                    (tempNewReport.codecStatus == CODECHAL_STATUS_ERROR)        ||
+                    (tempNewReport.codecStatus == CODECHAL_STATUS_INCOMPLETE)   ||
+                    (tempNewReport.codecStatus == CODECHAL_STATUS_RESET))
                 {
-                    if (mediaSurfaceHeapElmt != nullptr &&
-                            mediaSurfaceHeapElmt->pSurface != nullptr &&
-                            bo == mediaSurfaceHeapElmt->pSurface->bo)
+                    PDDI_MEDIA_SURFACE_HEAP_ELEMENT mediaSurfaceHeapElmt = (PDDI_MEDIA_SURFACE_HEAP_ELEMENT)mediaCtx->pSurfaceHeap->pHeapBase;
+
+                    uint32_t j = 0;
+                    for (j = 0; j < mediaCtx->pSurfaceHeap->uiAllocatedHeapElements && mediaSurfaceHeapElmt != nullptr; j++, mediaSurfaceHeapElmt++)
                     {
-                        mediaSurfaceHeapElmt->pSurface->curStatusReport.decode.status = (uint32_t)tempNewReport.codecStatus;
-                        mediaSurfaceHeapElmt->pSurface->curStatusReport.decode.errMbNum = (uint32_t)tempNewReport.numMbsAffected;
-                        mediaSurfaceHeapElmt->pSurface->curStatusReport.decode.crcValue = (uint32_t)tempNewReport.frameCrc;
-                        mediaSurfaceHeapElmt->pSurface->curStatusReportQueryState = DDI_MEDIA_STATUS_REPORT_QUERY_STATE_COMPLETED;
-                        break;
+                        if (mediaSurfaceHeapElmt->pSurface != nullptr && bo == mediaSurfaceHeapElmt->pSurface->bo)
+                        {
+                            mediaSurfaceHeapElmt->pSurface->curStatusReport.decode.status = (uint32_t)tempNewReport.codecStatus;
+                            mediaSurfaceHeapElmt->pSurface->curStatusReport.decode.errMbNum = (uint32_t)tempNewReport.numMbsAffected;
+                            mediaSurfaceHeapElmt->pSurface->curStatusReport.decode.crcValue = (uint32_t)tempNewReport.frameCrc;
+                            mediaSurfaceHeapElmt->pSurface->curStatusReportQueryState = DDI_MEDIA_STATUS_REPORT_QUERY_STATE_COMPLETED;
+                            break;
+                        }
                     }
                 }
-
-                if (j == mediaCtx->pSurfaceHeap->uiAllocatedHeapElements)
+                else
                 {
+                    // return failed if queried INCOMPLETE or UNAVAILABLE report.
                     return VA_STATUS_ERROR_OPERATION_FAILED;
                 }
             }
-            else
-            {
-                // return failed if queried INCOMPLETE or UNAVAILABLE report.
-                return VA_STATUS_ERROR_OPERATION_FAILED;
-            }
+        }
+        // The surface is not busy in HW, but uNumCompletedReport is 0, treat as engine reset 
+        else
+        {
+            surface->curStatusReport.decode.status = CODECHAL_STATUS_INCOMPLETE;
+            surface->curStatusReportQueryState = DDI_MEDIA_STATUS_REPORT_QUERY_STATE_COMPLETED;
+            DDI_ASSERTMESSAGE("No report available at all! Engine reset may have occured.");
         }
     }
 
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        MOS_TraceEvent(EVENT_DECODE_DDI_STATUSREPORTVA, EVENT_TYPE_END, NULL, 0, NULL, 0);
+    }
+#endif
     // check the report ptr of current surface.
     if (surface->curStatusReportQueryState == DDI_MEDIA_STATUS_REPORT_QUERY_STATE_COMPLETED)
     {
@@ -419,7 +535,9 @@ VAStatus DdiDecode_StatusReport(PDDI_MEDIA_CONTEXT mediaCtx, DecodePipelineAdapt
         {
             return VA_STATUS_ERROR_DECODING_ERROR;
         }
-        else if (surface->curStatusReport.decode.status == CODECHAL_STATUS_INCOMPLETE || surface->curStatusReport.decode.status == CODECHAL_STATUS_UNAVAILABLE)
+        else if (surface->curStatusReport.decode.status == CODECHAL_STATUS_INCOMPLETE    ||
+                 surface->curStatusReport.decode.status == CODECHAL_STATUS_RESET         ||
+                 surface->curStatusReport.decode.status == CODECHAL_STATUS_UNAVAILABLE)
         {
             return mediaCtx->bMediaResetEnable ? VA_STATUS_SUCCESS : VA_STATUS_ERROR_HW_BUSY;
         }
@@ -454,6 +572,13 @@ VAStatus DdiDecode_CreateContext (
 {
     PERF_UTILITY_AUTO(__FUNCTION__, PERF_DECODE, PERF_LEVEL_DDI);
 
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        DECODE_EVENTDATA_VA_CREATECONTEXT_START eventData;
+        eventData.configId = configId;
+        MOS_TraceEvent(EVENT_DECODE_DDI_CREATECONTEXTVA, EVENT_TYPE_START, &eventData, sizeof(eventData), NULL, 0);
+    }
+#endif
     MOS_CONTEXT                       mosCtx = {};
     PDDI_MEDIA_VACONTEXT_HEAP_ELEMENT contextHeapElement;
     DdiMediaDecode                    *ddiDecBase;
@@ -533,10 +658,10 @@ VAStatus DdiDecode_CreateContext (
     mosCtx.m_cmdBufMgr           = mediaCtx->m_cmdBufMgr;
     mosCtx.fd                    = mediaCtx->fd;
     mosCtx.iDeviceId             = mediaCtx->iDeviceId;
-    mosCtx.SkuTable              = mediaCtx->SkuTable;
-    mosCtx.WaTable               = mediaCtx->WaTable;
-    mosCtx.gtSystemInfo          = *mediaCtx->pGtSystemInfo;
-    mosCtx.platform              = mediaCtx->platform;
+    mosCtx.m_skuTable            = mediaCtx->SkuTable;
+    mosCtx.m_waTable             = mediaCtx->WaTable;
+    mosCtx.m_gtSystemInfo        = *mediaCtx->pGtSystemInfo;
+    mosCtx.m_platform            = mediaCtx->platform;
     mosCtx.ppMediaMemDecompState = &mediaCtx->pMediaMemDecompState;
     mosCtx.pfnMemoryDecompress   = mediaCtx->pfnMemoryDecompress;
     mosCtx.pfnMediaMemoryCopy    = mediaCtx->pfnMediaMemoryCopy;
@@ -547,6 +672,7 @@ VAStatus DdiDecode_CreateContext (
     mosCtx.m_osDeviceContext     = mediaCtx->m_osDeviceContext;
     mosCtx.m_apoMosEnabled       = mediaCtx->m_apoMosEnabled;
     mosCtx.pPerfData             = (PERF_DATA *)MOS_AllocAndZeroMemory(sizeof(PERF_DATA));
+    mosCtx.m_userSettingPtr      = mediaCtx->m_userSettingPtr;
 
     if (nullptr == mosCtx.pPerfData)
     {
@@ -618,6 +744,14 @@ VAStatus DdiDecode_CreateContext (
     {
         decCtx->RecListSurfaceID[i] = VA_INVALID_ID;
     }
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        DECODE_EVENTDATA_VA_CREATECONTEXT eventData;
+        eventData.configId = configId;
+        eventData.hRes = va;
+        MOS_TraceEvent(EVENT_DECODE_DDI_CREATECONTEXTVA, EVENT_TYPE_END, &eventData, sizeof(eventData), NULL, 0);
+    }
+#endif
     return va;
 }
 
@@ -637,6 +771,11 @@ static void* DdiMedia_GetDecCtxFromVABufferID (PDDI_MEDIA_CONTEXT mediaCtx, VABu
 {
     DDI_CHK_NULL(mediaCtx, "nullptr mediaCtx", nullptr);
 
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        MOS_TraceEvent(EVENT_DECODE_DDI_GETDECCTXFROMBUFFERIDVA, EVENT_TYPE_START, NULL, 0, NULL, 0);
+    }
+#endif
     uint32_t i      = (uint32_t)bufferID;
     DDI_CHK_LESS(i, mediaCtx->pBufferHeap->uiAllocatedHeapElements, "invalid buffer id", nullptr);
     DdiMediaUtil_LockMutex(&mediaCtx->BufferMutex);
@@ -645,6 +784,13 @@ static void* DdiMedia_GetDecCtxFromVABufferID (PDDI_MEDIA_CONTEXT mediaCtx, VABu
     void *temp      = bufHeapElement->pCtx;
     DdiMediaUtil_UnLockMutex(&mediaCtx->BufferMutex);
 
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        DECODE_EVENTDATA_VA_GETDECCTX eventData;
+        eventData.bufferID = (uint32_t)bufferID;
+        MOS_TraceEvent(EVENT_DECODE_DDI_GETDECCTXFROMBUFFERIDVA, EVENT_TYPE_END, &eventData, sizeof(eventData), NULL, 0);
+    }
+#endif
     return temp;
 }
 
@@ -671,7 +817,14 @@ static void DdiMedia_FreeBufferHeapElements(VADriverContextP    ctx, PDDI_DECODE
         return;
 
     int32_t bufNums = mediaCtx->uiNumBufs;
-    for (int32_t elementId = 0; bufNums > 0; ++elementId)
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        DECODE_EVENTDATA_VA_FREEBUFFERHEAPELEMENTS eventData;
+        eventData.bufNums = bufNums;
+        MOS_TraceEvent(EVENT_DECODE_DDI_FREEBUFFERHEAPELEMENTSVA, EVENT_TYPE_START, &eventData, sizeof(eventData), NULL, 0);
+    }
+#endif
+    for (int32_t elementId = 0; bufNums > 0 && elementId < bufferHeap->uiAllocatedHeapElements; ++elementId)
     {
         PDDI_MEDIA_BUFFER_HEAP_ELEMENT mediaBufferHeapElmt = &mediaBufferHeapBase[elementId];
         if (nullptr == mediaBufferHeapElmt->pBuffer)
@@ -697,6 +850,13 @@ static void DdiMedia_FreeBufferHeapElements(VADriverContextP    ctx, PDDI_DECODE
         //Ensure the non-empty buffer to be destroyed.
         --bufNums;
     }
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        DECODE_EVENTDATA_VA_FREEBUFFERHEAPELEMENTS eventData;
+        eventData.bufNums = bufNums;
+        MOS_TraceEvent(EVENT_DECODE_DDI_FREEBUFFERHEAPELEMENTSVA, EVENT_TYPE_END, &eventData, sizeof(eventData), NULL, 0);
+    }
+#endif
 }
 
 VAStatus DdiDecode_DestroyContext (
@@ -704,6 +864,13 @@ VAStatus DdiDecode_DestroyContext (
     VAContextID         context
 )
 {
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        DECODE_EVENTDATA_VA_DESTROYCONTEXT_START eventData;
+        eventData.context = context;
+        MOS_TraceEvent(EVENT_DECODE_DDI_DESTROYCONTEXTVA, EVENT_TYPE_START, &eventData, sizeof(eventData), NULL, 0);
+    }
+#endif
     PDDI_MEDIA_CONTEXT mediaCtx   = DdiMedia_GetMediaContext(ctx);
     DDI_CHK_NULL(mediaCtx,          "nullptr mediaCtx",          VA_STATUS_ERROR_INVALID_CONTEXT);
     uint32_t  ctxType;
@@ -720,6 +887,13 @@ VAStatus DdiDecode_DestroyContext (
 
     DdiMedia_FreeBufferHeapElements(ctx, decCtx);
 
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        DECODE_EVENTDATA_VA_DESTROYCONTEXT eventData;
+        eventData.context = context;
+        MOS_TraceEvent(EVENT_DECODE_DDI_DESTROYCONTEXTVA, EVENT_TYPE_END, &eventData, sizeof(eventData), NULL, 0);
+    }
+#endif
     if (decCtx->m_ddiDecode) {
     DdiDecodeCleanUp(ctx,decCtx);
         return VA_STATUS_SUCCESS;
@@ -734,6 +908,11 @@ VAStatus DdiDecode_SetGpuPriority(
     int32_t              priority
 )
 {
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        MOS_TraceEvent(EVENT_DECODE_DDI_SETGPUPRIORITYVA, EVENT_TYPE_START, NULL, 0, NULL, 0);
+    }
+#endif
     PDDI_MEDIA_CONTEXT mediaCtx = DdiMedia_GetMediaContext(ctx);
     DDI_CHK_NULL(mediaCtx,           "nullptr mediaCtx",                             VA_STATUS_ERROR_INVALID_CONTEXT);
     DDI_CHK_NULL(decCtx,             "nullptr decCtx",                               VA_STATUS_ERROR_INVALID_CONTEXT);
@@ -752,6 +931,11 @@ VAStatus DdiDecode_SetGpuPriority(
         MediaVeboxDecompState *mediaVeboxDecompState = static_cast<MediaVeboxDecompState*>(mediaCtx->pMediaMemDecompState);
         if(mediaVeboxDecompState->m_osInterface)
             mediaVeboxDecompState->m_osInterface->pfnSetGpuPriority(mediaVeboxDecompState->m_osInterface, priority);
+    }
+#endif
+#if MOS_EVENT_TRACE_DUMP_SUPPORTED
+    {
+        MOS_TraceEvent(EVENT_DECODE_DDI_SETGPUPRIORITYVA, EVENT_TYPE_END, NULL, 0, NULL, 0);
     }
 #endif
     return VA_STATUS_SUCCESS;

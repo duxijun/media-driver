@@ -28,7 +28,7 @@
 
 #include "media_libva_common.h"
 #include "mos_util_debug.h"
-#include "mos_bufmgr.h"
+#include "mos_bufmgr_api.h"
 
 #define DEVICE_NAME "/dev/dri/renderD128"   // For Gen, it is always /dev/dri/renderD128 node
 
@@ -65,7 +65,7 @@ VAStatus DdiMediaUtil_CreateBuffer(DDI_MEDIA_BUFFER *buffer, mos_bufmgr *bufmgr)
 
 //!
 //! \brief  Lock surface
-//! 
+//!
 //! \param  [in] surface
 //!         Ddi media surface
 //! \param  [in] flag
@@ -77,12 +77,33 @@ VAStatus DdiMediaUtil_CreateBuffer(DDI_MEDIA_BUFFER *buffer, mos_bufmgr *bufmgr)
 void*    DdiMediaUtil_LockSurface(DDI_MEDIA_SURFACE  *surface, uint32_t flag);
 
 //!
+//! \brief  Lock surface
+//!
+//! \param  [in] surface
+//!         Ddi media surface
+//! \param  [in] flag
+//!         Flag
+//!
+//! \return void*
+//!     Pointer to lock surface data
+//!
+void* DdiMediaUtil_LockSurfaceInternal(DDI_MEDIA_SURFACE *surface, uint32_t flag);
+
+//!
 //! \brief  Unlock surface
-//! 
+//!
 //! \param  [in] surface
 //!         Ddi media surface
 //!
 void     DdiMediaUtil_UnlockSurface(DDI_MEDIA_SURFACE  *surface);
+
+//!
+//! \brief  Unlock surface
+//!
+//! \param  [in] surface
+//!         Ddi media surface
+//!
+void     DdiMediaUtil_UnlockSurfaceInternal(DDI_MEDIA_SURFACE *surface);
 
 //!
 //! \brief  Lock buffer

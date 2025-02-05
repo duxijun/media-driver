@@ -25,7 +25,7 @@
 //! \details  Implements the MOS interface extension cross OS - virtual engine. Only necessary when KMD virtual engine is supported
 //!
 
-#include "mos_util_debug.h"
+#include "mos_os.h"
 #include "mos_os_virtualengine_singlepipe_specific.h"
 #include "mos_os_virtualengine_scalability_specific.h"
 #include "mos_os_virtualengine_singlepipe_specific_next.h"
@@ -95,8 +95,9 @@ MOS_STATUS Mos_VirtualEngineInterface_Initialize(
         MOS_OS_CHK_STATUS(Mos_Specific_VirtualEngine_SinglePipe_Initialize(pVEInterf, pVEInitParms));
     }
 
-    if (pOsInterface->apoMosEnabled)
+    if (pOsInterface->apoMosEnabled || pOsInterface->apoMosForLegacyRuntime)
     {
+        MOS_OS_CHK_NULL(pOsInterface->osStreamState);
         if (pVEInitParms->bScalabilitySupported)
         {
             pVEInterf->veInterface = MOS_New(MosOsVeScalabilitySpecific);
@@ -106,12 +107,13 @@ MOS_STATUS Mos_VirtualEngineInterface_Initialize(
             pVEInterf->veInterface = MOS_New(MosOsVeSinglePipeSpecific);
         }
         MOS_OS_CHK_NULL(pVEInterf->veInterface);
-        MOS_OS_CHK_NULL(pOsInterface->osStreamState);
-        pVEInterf->veInterface->Initialize(pOsInterface->osStreamState, pVEInitParms);
+        MOS_OS_CHK_STATUS(pVEInterf->veInterface->Initialize(pOsInterface->osStreamState, pVEInitParms));
         pOsInterface->osStreamState->virtualEngineInterface = pVEInterf->veInterface;
     }
+    return eStatus;
 
 finish:
+    MOS_SafeFreeMemory(pVEInterf);
     return eStatus;
 }
 

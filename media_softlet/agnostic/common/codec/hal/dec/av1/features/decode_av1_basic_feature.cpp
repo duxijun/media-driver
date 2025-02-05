@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019-2021, Intel Corporation
+* Copyright (c) 2019-2024, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -26,33 +26,29 @@
 
 #include "decode_av1_basic_feature.h"
 #include "decode_utils.h"
-#include "codechal_utilities.h"
 #include "decode_allocator.h"
 
 namespace decode
 {
     Av1BasicFeature::~Av1BasicFeature()
     {
-        for (uint8_t i = 0; i < av1DefaultCdfTableNum; i++)
+        if (m_allocator)
         {
-            if (!m_allocator->ResourceIsNull(&m_tmpCdfBuffers[i]->OsResource))
+            for (uint8_t i = 0; i < av1DefaultCdfTableNum; i++)
             {
-                m_allocator->Destroy(m_tmpCdfBuffers[i]);
+                if (!m_allocator->ResourceIsNull(&m_defaultCdfBuffers[i]->OsResource))
+                {
+                    m_allocator->Destroy(m_defaultCdfBuffers[i]);
+                }
             }
-
-            if (!m_allocator->ResourceIsNull(&m_defaultCdfBuffers[i]->OsResource))
+            if (m_usingDummyWl == true)
             {
-                m_allocator->Destroy(m_defaultCdfBuffers[i]);
+                m_allocator->Destroy(m_destSurfaceForDummyWL);
             }
-
-        }
-        if (m_usingDummyWl == true)
-        {
-            m_allocator->Destroy(m_destSurfaceForDummyWL);
-        }
-        if (m_fgInternalSurf != nullptr && !m_allocator->ResourceIsNull(&m_fgInternalSurf->OsResource))
-        {
-            m_allocator->Destroy(m_fgInternalSurf);
+            if (m_fgInternalSurf != nullptr && !m_allocator->ResourceIsNull(&m_fgInternalSurf->OsResource))
+            {
+                m_allocator->Destroy(m_fgInternalSurf);
+            }
         }
     }
 
@@ -89,7 +85,7 @@ namespace decode
         }
 
         DECODE_CHK_STATUS(m_refFrames.Init(this, *m_allocator));
-        DECODE_CHK_STATUS(m_tempBuffers.Init(*m_hwInterface, *m_allocator, *this, CODEC_NUM_REF_AV1_TEMP_BUFFERS));
+        DECODE_CHK_STATUS(m_tempBuffers.Init(m_hwInterface, *m_allocator, *this, CODEC_NUM_REF_AV1_TEMP_BUFFERS));
         DECODE_CHK_STATUS(m_tileCoding.Init(this, codecSettings));
         DECODE_CHK_STATUS(m_internalTarget.Init(*m_allocator));
 
@@ -110,6 +106,11 @@ namespace decode
         m_dataSize = decodeParams->m_dataSize;
         m_av1PicParams  = static_cast<CodecAv1PicParams*>(decodeParams->m_picParams);
         DECODE_CHK_NULL(m_av1PicParams);
+
+        if (decodeParams->m_destSurface->OsResource.Format == Format_P010)
+        {
+            m_bitDepth = 10;
+        }
 
         // Do error detection and concealment
         DECODE_CHK_STATUS(ErrorDetectAndConceal());
@@ -154,28 +155,66 @@ namespace decode
         return MOS_STATUS_SUCCESS;
     }
 
-    MOS_STATUS Av1BasicFeature::ErrorDetectAndConceal()
+    MOS_STATUS Av1BasicFeature::CheckProfileAndSubsampling()
     {
-        DECODE_FUNC_CALL()
-        DECODE_CHK_NULL(m_av1PicParams);
+        DECODE_FUNC_CALL();
 
         // Profile and subsampling
         if (m_av1PicParams->m_seqInfoFlags.m_fields.m_monoChrome ||
             m_av1PicParams->m_profile != 0 ||
-            !(m_av1PicParams->m_seqInfoFlags.m_fields.m_subsamplingX ==1 &&
+            !(m_av1PicParams->m_seqInfoFlags.m_fields.m_subsamplingX == 1 &&
                 m_av1PicParams->m_seqInfoFlags.m_fields.m_subsamplingY == 1))
         {
             DECODE_ASSERTMESSAGE("Only 4:2:0 8bit and 10bit are supported!");
             return MOS_STATUS_INVALID_PARAMETER;
         }
 
+        return MOS_STATUS_SUCCESS;
+    }
+
+    MOS_STATUS Av1BasicFeature::CheckBitdepth()
+    {
+        DECODE_FUNC_CALL();
+
+        if ((m_av1PicParams->m_bitDepthIdx == 0 && m_bitDepth != 8) ||
+            (m_av1PicParams->m_bitDepthIdx == 1 && m_bitDepth != 10))
+        {
+            DECODE_ASSERTMESSAGE("Bit depth not align!");
+            return MOS_STATUS_INVALID_PARAMETER;
+        }
+
+        return MOS_STATUS_SUCCESS;
+    }
+
+    MOS_STATUS Av1BasicFeature::ErrorDetectAndConceal()
+    {
+        DECODE_FUNC_CALL()
+        DECODE_CHK_NULL(m_av1PicParams);
+
+        DECODE_CHK_STATUS(CheckProfileAndSubsampling());
+
+        DECODE_CHK_STATUS(CheckBitdepth());
+
+        // Frame Width/Frame Height, valid range is [15, 16383]
+        if (m_av1PicParams->m_frameWidthMinus1 < 15 || m_av1PicParams->m_frameHeightMinus1 < 15)
+        {
+            DECODE_ASSERTMESSAGE("Frame Width/Height is invalid, out of [15, 16383].");
+            return MOS_STATUS_INVALID_PARAMETER;
+        }
+
+        if (!m_av1PicParams->m_seqInfoFlags.m_fields.m_enableOrderHint &&
+            (m_av1PicParams->m_orderHint != 0))
+        {
+            DECODE_ASSERTMESSAGE("orderHint Conflict with AV1 Spec!");
+            return MOS_STATUS_INVALID_PARAMETER;
+        }
         if(m_av1PicParams->m_picInfoFlags.m_fields.m_allowIntrabc &&
             (!(m_av1PicParams->m_picInfoFlags.m_fields.m_frameType == keyFrame ||
                 m_av1PicParams->m_picInfoFlags.m_fields.m_frameType == intraOnlyFrame) ||
                 !m_av1PicParams->m_picInfoFlags.m_fields.m_allowScreenContentTools ||
                 m_av1PicParams->m_picInfoFlags.m_fields.m_useSuperres))
         {
-            DECODE_ASSERTMESSAGE("Conflict with AV1 Spec.");
+            DECODE_ASSERTMESSAGE("Superres use Conflict with AV1 Spec.");
             return MOS_STATUS_INVALID_PARAMETER;
         }
 
@@ -258,6 +297,54 @@ namespace decode
             return MOS_STATUS_INVALID_PARAMETER;
         }
 
+        // Film grain parameter check
+        if (m_av1PicParams->m_seqInfoFlags.m_fields.m_filmGrainParamsPresent &&
+            m_av1PicParams->m_filmGrainParams.m_filmGrainInfoFlags.m_fields.m_applyGrain)
+        {
+            // Check film grain parameter of the luma component
+            if (m_av1PicParams->m_filmGrainParams.m_numYPoints > 14)
+            {
+                DECODE_ASSERTMESSAGE("Invalid film grain num_y_points (should be in [0, 14]) in pic parameter!");
+                return MOS_STATUS_INVALID_PARAMETER;
+            }
+            for (auto i = 1; i < m_av1PicParams->m_filmGrainParams.m_numYPoints; i++)
+            {
+                if (m_av1PicParams->m_filmGrainParams.m_pointYValue[i] <= m_av1PicParams->m_filmGrainParams.m_pointYValue[i - 1])
+                {
+                    DECODE_ASSERTMESSAGE("Invalid film grain point_y_value (point_y_value[%d] should be greater than point_y_value[%d]) in pic parameter!", i, i - 1);
+                    return MOS_STATUS_INVALID_PARAMETER;
+                }
+            }
+            // Check film grain parameter of the cb component
+            if (m_av1PicParams->m_filmGrainParams.m_numCbPoints > 10)
+            {
+                DECODE_ASSERTMESSAGE("Invalid film grain num_cb_points (should be in [0, 10]) in pic parameter!");
+                return MOS_STATUS_INVALID_PARAMETER;
+            }
+            for (auto i = 1; i < m_av1PicParams->m_filmGrainParams.m_numCbPoints; i++)
+            {
+                if (m_av1PicParams->m_filmGrainParams.m_pointCbValue[i] <= m_av1PicParams->m_filmGrainParams.m_pointCbValue[i - 1])
+                {
+                    DECODE_ASSERTMESSAGE("Invalid film grain point_cb_value (point_cb_value[%d] should be greater than point_cb_value[%d]) in pic parameter!", i, i - 1);
+                    return MOS_STATUS_INVALID_PARAMETER;
+                }
+            }
+            // Check film grain parameter of the cr component
+            if (m_av1PicParams->m_filmGrainParams.m_numCrPoints > 10)
+            {
+                DECODE_ASSERTMESSAGE("Invalid film grain num_cr_points (should be in [0, 10]) in pic parameter!");
+                return MOS_STATUS_INVALID_PARAMETER;
+            }
+            for (auto i = 1; i < m_av1PicParams->m_filmGrainParams.m_numCrPoints; i++)
+            {
+                if (m_av1PicParams->m_filmGrainParams.m_pointCrValue[i] <= m_av1PicParams->m_filmGrainParams.m_pointCrValue[i - 1])
+                {
+                    DECODE_ASSERTMESSAGE("Invalid film grain point_cr_value (point_cr_value[%d] should be greater than point_cr_value[%d]) in pic parameter!", i, i - 1);
+                    return MOS_STATUS_INVALID_PARAMETER;
+                }
+            }
+        }
+
         //Error Concealment for CDEF
         if (m_av1PicParams->m_losslessMode ||
             m_av1PicParams->m_picInfoFlags.m_fields.m_allowIntrabc ||
@@ -299,6 +386,19 @@ namespace decode
             m_av1PicParams->m_loopRestorationFlags.m_value = 0;
         }
 
+        // LRU Luma Size cannot < Superblock Size. If Superblock Size is 128x128, LRU Luma Size cannot be 64x64.
+        if (m_av1PicParams->m_seqInfoFlags.m_fields.m_use128x128Superblock)
+        {
+            if (m_av1PicParams->m_loopRestorationFlags.m_fields.m_lrUnitShift == 0 &&
+                (m_av1PicParams->m_loopRestorationFlags.m_fields.m_yframeRestorationType ||
+                    m_av1PicParams->m_loopRestorationFlags.m_fields.m_cbframeRestorationType ||
+                    m_av1PicParams->m_loopRestorationFlags.m_fields.m_crframeRestorationType))
+            {
+                DECODE_ASSERTMESSAGE("Superblock use Conflict with AV1 Spec!");
+                m_av1PicParams->m_loopRestorationFlags.m_value = 0;
+            }
+        }
+
         // Error Concealment for DeltaLF and DeltaQ
         if (m_av1PicParams->m_baseQindex == 0)
         {
@@ -330,6 +430,12 @@ namespace decode
               m_av1PicParams->m_picInfoFlags.m_fields.m_showableFrame))
         {
             memset(&m_av1PicParams->m_filmGrainParams, 0, sizeof(CodecAv1FilmGrainParams));
+        }
+
+        // Error Concealment for Reference List
+        if (m_av1PicParams->m_picInfoFlags.m_fields.m_frameType != keyFrame && m_av1PicParams->m_picInfoFlags.m_fields.m_frameType != intraOnlyFrame)
+        {
+            DECODE_CHK_STATUS(m_refFrames.ErrorConcealment(*m_av1PicParams));
         }
 
         return MOS_STATUS_SUCCESS;
@@ -460,11 +566,27 @@ namespace decode
 
             DECODE_CHK_STATUS(m_allocator->GetSurfaceInfo(m_filmGrainProcParams->m_outputSurface));
             m_fgOutputSurf = *m_filmGrainProcParams->m_outputSurface;
+#if (_DEBUG || _RELEASE_INTERNAL)
+            m_fgOutputSurfList[m_curRenderPic.FrameIdx] = m_fgOutputSurf;
+#endif
         }
 
         DECODE_CHK_STATUS(UpdateDefaultCdfTable());
         DECODE_CHK_STATUS(m_refFrames.UpdatePicture(*m_av1PicParams));
-        DECODE_CHK_STATUS(m_tempBuffers.UpdatePicture(m_av1PicParams->m_currPic.FrameIdx, m_refFrameIndexList));
+
+        if (m_osInterface->pfnIsMismatchOrderProgrammingSupported())
+        {
+            for (auto &refFrameIdx : m_refFrameIndexList)
+            {
+                DECODE_CHK_STATUS(m_tempBuffers.ActiveCurBuffer(refFrameIdx));
+            }
+            DECODE_CHK_STATUS(m_tempBuffers.ReActiveCurBuffer(m_av1PicParams->m_currPic.FrameIdx, m_refFrameIndexList));
+        }
+        else
+        {
+            DECODE_CHK_STATUS(m_tempBuffers.UpdatePicture(m_av1PicParams->m_currPic.FrameIdx, m_refFrameIndexList));
+        }
+
         DECODE_CHK_STATUS(SetSegmentData(*m_av1PicParams));
 
         DECODE_CHK_STATUS(CalculateGlobalMotionParams());
@@ -764,20 +886,16 @@ namespace decode
         {
             for (uint8_t index = 0; index < av1DefaultCdfTableNum; index++)
             {
-                m_tmpCdfBuffers[index] = m_allocator->AllocateBuffer(
+                m_defaultCdfBuffers[index] = m_allocator->AllocateBuffer(
                     MOS_ALIGN_CEIL(m_cdfMaxNumBytes, CODECHAL_PAGE_SIZE), "TempCdfTableBuffer",
                     resourceInternalRead, lockableVideoMem);
-                DECODE_CHK_NULL(m_tmpCdfBuffers[index]);
+                DECODE_CHK_NULL(m_defaultCdfBuffers[index]);
 
-                auto data = (uint16_t *)m_allocator->LockResourceForWrite(&m_tmpCdfBuffers[index]->OsResource);
+                auto data = (uint16_t *)m_allocator->LockResourceForWrite(&m_defaultCdfBuffers[index]->OsResource);
                 DECODE_CHK_NULL(data);
 
                 // reset all CDF tables to default values
                 DECODE_CHK_STATUS(InitDefaultFrameContextBuffer(data, index));
-                m_defaultCdfBuffers[index] = m_allocator->AllocateBuffer(
-                    MOS_ALIGN_CEIL(m_cdfMaxNumBytes, CODECHAL_PAGE_SIZE), "m_defaultCdfBuffers",
-                    resourceInternalRead, notLockableVideoMem);
-                DECODE_CHK_NULL(m_defaultCdfBuffers[index]);
             }
 
             m_defaultFcInitialized = true;//set only once, won't set again

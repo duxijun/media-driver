@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2019-2021, Intel Corporation
+* Copyright (c) 2019-2024, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -101,6 +101,14 @@ public:
     //!
     PMOS_RESOURCE GetValidReference();
 
+    //!
+    //! \brief  Get valid reference index for error concealment.
+    //! \param  [out] uint8_t
+    //!         Valid reference resource index
+    //! \return   MOS_STATUS
+    //!           MOS_STATUS_SUCCESS if success, else fail reason
+    MOS_STATUS GetValidReferenceIndex(uint8_t *validRefIndex);
+
     //! \brief    Identify the first nearest reference frame
     //! \return   MOS_STATUS
     //!           MOS_STATUS_SUCCESS if success, else fail reason
@@ -177,15 +185,36 @@ public:
     //!
     MOS_STATUS             UpdateCurResource(const PCODEC_REF_LIST_AV1 pCurRefList);
 
+    //!
+    //! \brief  Update the reference cache policy
+    //! \param  [in] picParams
+    //!         Picture parameters
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    MOS_STATUS UpdateRefCachePolicy(CodecAv1PicParams &picParams);
+
+    //!
+    //! \brief  Error detect and concealment for reference list for picture
+    //! \param  [in] picParams
+    //!         Picture parameters
+    //! \return  MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    MOS_STATUS ErrorConcealment(CodecAv1PicParams &picParams);
+
     PCODEC_REF_LIST_AV1    m_refList[CODECHAL_MAX_DPB_NUM_LST_AV1]; //!< Pointer to reference list, actually the DPB
     PCODEC_REF_LIST_AV1    m_currRefList = nullptr;                 //!< Current frame reference list
 
 protected:
 
-    uint8_t m_prevFrameIdx = 0;                 //!< primary reference frame index
-    Av1BasicFeature *m_basicFeature = nullptr;  //!< AV1 basic feature
-    DecodeAllocator *m_allocator    = nullptr;  //!< Decode allocator
-    std::vector<uint8_t> m_activeReferenceList; //!< Active reference list of current picture
+    uint8_t m_prevFrameIdx = 0;                   //!< primary reference frame index
+    Av1BasicFeature *m_basicFeature = nullptr;    //!< AV1 basic feature
+    DecodeAllocator *m_allocator    = nullptr;    //!< Decode allocator
+    std::vector<uint8_t> m_activeReferenceList;   //!< Active reference list of current picture
+    PMOS_INTERFACE       m_osInterface = nullptr; //!< Os interface
+
+MEDIA_CLASS_DEFINE_END(decode__Av1ReferenceFrames)
 };
 
 }  // namespace decode

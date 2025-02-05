@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2018-2021, Intel Corporation
+* Copyright (c) 2018-2022, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -35,12 +35,12 @@
 #include "vp_utils.h"
 #include "vp_allocator.h"
 #include "vp_status_report.h"
-#include "vphal.h"
 #include "vp_dumper.h"
 #include "vp_debug_interface.h"
 #include "vp_feature_manager.h"
 #include "vp_packet_shared_context.h"
 #include "vp_kernelset.h"
+#include "vp_packet_reuse_manager.h"
 
 namespace vp
 {
@@ -64,6 +64,57 @@ struct VP_PARAMS
         PVP_PIPELINE_PARAMS renderParams;
         VEBOX_SFC_PARAMS    *sfcParams;
     };
+};
+
+class VpPipelineParamFactory
+{
+public:
+    VpPipelineParamFactory(){};
+    virtual ~VpPipelineParamFactory()
+    {
+        while (!m_Pool.empty())
+        {
+            PVP_PIPELINE_PARAMS param = m_Pool.back();
+            m_Pool.pop_back();
+            MOS_Delete(param);
+        }
+    }
+
+    virtual PVP_PIPELINE_PARAMS Clone(PVP_PIPELINE_PARAMS param)
+    {
+        PVP_PIPELINE_PARAMS paramDst = nullptr;
+
+        if (m_Pool.empty())
+        {
+            paramDst = MOS_New(VP_PIPELINE_PARAMS);
+            *paramDst = *param;
+        }
+        else
+        {
+            paramDst = m_Pool.back();
+            if (paramDst)
+            {
+                m_Pool.pop_back();
+                *paramDst = *param;
+            }
+        }
+        return paramDst;
+    }
+
+    virtual MOS_STATUS Destroy(PVP_PIPELINE_PARAMS &param)
+    {
+        if (param == nullptr)
+        {
+            return MOS_STATUS_SUCCESS;
+        }
+        m_Pool.push_back(param);
+        param = nullptr;
+        return MOS_STATUS_SUCCESS;
+    }
+
+    std::vector<PVP_PIPELINE_PARAMS> m_Pool;
+
+MEDIA_CLASS_DEFINE_END(vp__VpPipelineParamFactory)
 };
 
 class VpPipeline : public MediaPipeline
@@ -159,6 +210,30 @@ public:
     //!
     bool IsVeboxSfcFormatSupported(MOS_FORMAT formatInput, MOS_FORMAT formatOutput);
 
+    virtual MOS_STATUS ProcessBypassHandler(PVP_PIPELINE_PARAMS renderParams, bool &isBypassNeeded)
+    {
+        return MOS_STATUS_SUCCESS;
+    }
+
+    virtual MOS_STATUS CreateVPDebugInterface();
+
+    VpUserFeatureControl *GetUserFeatureControl()
+    {
+        return m_userFeatureControl;
+    }
+
+    VpAllocator *GetAllocator()
+    {
+        return m_allocator;
+    }
+
+    virtual bool IsOclFCEnabled()
+    {
+        return m_vpMhwInterface.m_userFeatureControl->EnableOclFC();
+    }
+
+    // for debug purpose
+#if (_DEBUG || _RELEASE_INTERNAL)
     //!
     //! \brief  replace output surface from Tile-Y to Linear
     //! \param  [in] params
@@ -166,17 +241,12 @@ public:
     //! \return MOS_STATUS
     //!         MOS_STATUS_SUCCESS if success, else fail reason
     //!
-#if (_DEBUG || _RELEASE_INTERNAL)
     MOS_STATUS SurfaceReplace(PVP_PIPELINE_PARAMS params);
-#endif
-    MOS_STATUS InitUserFeatureSetting();
-    // for debug purpose
-#if (_DEBUG || _RELEASE_INTERNAL)
     virtual VPHAL_SURFACE *AllocateTempTargetSurface(VPHAL_SURFACE *m_tempTargetSurface);
 #endif
 
-    static const uint32_t m_4k_content_width  = 3840;
-    static const uint32_t m_4k_content_height = 2160;
+    static const uint32_t m_scalability_threshWidth  = 4096;
+    static const uint32_t m_scalability_threshHeight = 2880;
 
 protected:
 
@@ -196,7 +266,26 @@ protected:
     //! \return MOS_STATUS
     //!         MOS_STATUS_SUCCESS if success, else fail reason
     //!
+    virtual MOS_STATUS PrepareVpPipelineScalabilityParams(VEBOX_SFC_PARAMS* params);
+
+
+    //!
+    //! \brief  prepare execution params for vp scalability pipeline
+    //! \param  [in] params
+    //!         Pointer to VP scalability pipeline params
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
     virtual MOS_STATUS PrepareVpPipelineScalabilityParams(PVP_PIPELINE_PARAMS params);
+
+    //!
+    //! \brief  prepare execution params for vp scalability pipeline
+    //! \param  [in] params
+    //!         src and dst surface's width and height
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS PrepareVpPipelineScalabilityParams(uint32_t srcWidth, uint32_t srcHeight, uint32_t dstWidth, uint32_t dstHeight);
 
     //!
     //! \brief  Execute Vp Pipeline, and generate VP Filters
@@ -210,7 +299,7 @@ protected:
     //! \return MOS_STATUS
     //!         MOS_STATUS_SUCCESS if success, else fail reason
     //!
-    virtual MOS_STATUS UpdateExecuteStatus();
+    virtual MOS_STATUS UpdateExecuteStatus(uint32_t frameCn);
 
     //!
     //! \brief  Create SwFilterPipe
@@ -235,7 +324,9 @@ protected:
     //! \return MOS_STATUS
     //!         MOS_STATUS_SUCCESS if success, else fail reason
     //!
-    virtual MOS_STATUS CreateFeatureManager() override;
+    virtual MOS_STATUS CreateFeatureManager(VpResourceManager * vpResourceManager);
+
+    virtual MOS_STATUS CreateSinglePipeContext();
 
 //!
 //! \brief  create media kernel sets
@@ -244,12 +335,6 @@ protected:
 //!
     virtual MOS_STATUS CreateVpKernelSets();
 
-    //!
-    //! \brief  create reource manager
-    //! \return MOS_STATUS
-    //!         MOS_STATUS_SUCCESS if success, else fail reason
-    //!
-    virtual MOS_STATUS CreateResourceManager();
     virtual MOS_STATUS CheckFeatures(void *params, bool &bapgFuncSupported);
 
     //!
@@ -273,6 +358,9 @@ protected:
         m_reporting->owner = this;
         return MOS_STATUS_SUCCESS;
     }
+
+    virtual MOS_STATUS CreateUserFeatureControl();
+
     //!
     //! \brief  set Predication Params
     //! \return MOS_STATUS
@@ -282,6 +370,20 @@ protected:
     {
         return MOS_STATUS_SUCCESS;
     }
+
+    virtual MOS_STATUS UpdateFrameTracker();
+
+#if (_DEBUG || _RELEASE_INTERNAL)
+    //!
+    //! \brief  Report INTER_FRAME_MEMORY_NINJA_START_COUNTER and INTER_FRAME_MEMORY_NINJA_END_COUNTER
+    //!         INTER_FRAME_MEMORY_NINJA_START_COUNTER will be reported in Prepare() function
+    //!         INTER_FRAME_MEMORY_NINJA_END_COUNTER will be reported in UserFeatureReport() function which runs in EXecute()
+    //! \param
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS ReportIFNCC(bool bStart);
+#endif
 
     //!
     //! \brief  set Video Processing Settings
@@ -294,7 +396,7 @@ protected:
     {
         if (!settings)
         {
-            VPHAL_PUBLIC_NORMALMESSAGE("No VPP Settings needed, driver to handle features behavious by self");
+            VP_PUBLIC_NORMALMESSAGE("No VPP Settings needed, driver to handle features behavious by self");
             return MOS_STATUS_SUCCESS;
         }
 
@@ -336,43 +438,46 @@ protected:
         return (m_numVebox > 1) ? true : false;
     }
 
+    MOS_STATUS UpdateVeboxNumberforScalability();
+
+    MOS_STATUS ExecuteSingleswFilterPipe(VpSinglePipeContext *singlePipeCtx, SwFilterPipe *&pipe, PacketPipe *pPacketPipe, VpFeatureManagerNext *featureManagerNext);
+    MOS_STATUS UpdateRectForNegtiveDstTopLeft(PVP_PIPELINE_PARAMS params);
+
 protected:
     VP_PARAMS              m_pvpParams              = {};   //!< vp Pipeline params
     VP_MHWINTERFACE        m_vpMhwInterface         = {};   //!< vp Pipeline Mhw Interface
 
     uint8_t                m_numVebox               = 0;
+    uint8_t                m_numVeboxOriginal       = 0;
     uint32_t               m_forceMultiplePipe      = 0;
     VpAllocator           *m_allocator              = nullptr;  //!< vp Pipeline allocator
     VPMediaMemComp        *m_mmc                    = nullptr;  //!< vp Pipeline mmc
 
     // For user feature report
     VphalFeatureReport    *m_reporting              = nullptr;  //!< vp Pipeline user feature report
-    VPHAL_OUTPUT_PIPE_MODE m_vpOutputPipe           = VPHAL_OUTPUT_PIPE_MODE_INVALID;
-    bool                   m_veboxFeatureInuse      = false;
 
     VPStatusReport        *m_statusReport           = nullptr;  //!< vp Pipeline status report
-    // Surface dumper fields (counter and specification)
-    uint32_t               m_frameCounter           = 0;
+
 #if (_DEBUG || _RELEASE_INTERNAL)
     VpDebugInterface      *m_debugInterface         = nullptr;
 #endif
     bool                   m_currentFrameAPGEnabled = false;
     PacketFactory         *m_pPacketFactory         = nullptr;
     PacketPipeFactory     *m_pPacketPipeFactory     = nullptr;
-    VpResourceManager     *m_resourceManager        = nullptr;
     VpKernelSet           *m_kernelSet              = nullptr;
     VPFeatureManager      *m_paramChecker           = nullptr;
     VP_PACKET_SHARED_CONTEXT *m_packetSharedContext = nullptr;
     VpInterface           *m_vpInterface            = nullptr;
 #if (_DEBUG || _RELEASE_INTERNAL)
     VPHAL_SURFACE         *m_tempTargetSurface      = nullptr;
-    struct
-    {
-        uint32_t enableSFCNv12P010LinearOutput      = 0;
-        uint32_t enableSFCRGBPRGB24Output           = 0;
-    } m_userFeatureSetting;
 #endif
     VP_SETTINGS           *m_vpSettings = nullptr;
+    VpUserFeatureControl  *m_userFeatureControl = nullptr;
+    std::vector<VpSinglePipeContext *> m_vpPipeContexts     = {};
+    VpPipelineParamFactory            *m_pipelineParamFactory = nullptr;
+    bool                               m_reportOnceFlag       = true;
+
+    MEDIA_CLASS_DEFINE_END(vp__VpPipeline)
 };
 
 struct _VP_SFC_PACKET_PARAMS
@@ -381,6 +486,95 @@ struct _VP_SFC_PACKET_PARAMS
 };
 
 using VP_SFC_PACKET_PARAMS = _VP_SFC_PACKET_PARAMS;
+
+class VpSinglePipeContext
+{
+public:
+    VpSinglePipeContext();
+    virtual ~VpSinglePipeContext();
+
+    virtual MOS_STATUS Init(PMOS_INTERFACE osInterface, VpAllocator *allocator, VphalFeatureReport *reporting, vp::VpPlatformInterface *vpPlatformInterface, PacketPipeFactory *packetPipeFactory, VpUserFeatureControl *userFeatureControl, MediaCopyWrapper *mediaCopyWrapper);
+
+    //!
+    //! \brief  create reource manager
+    //! \return MOS_STATUS
+    //!         MOS_STATUS_SUCCESS if success, else fail reason
+    //!
+    virtual MOS_STATUS CreateResourceManager(PMOS_INTERFACE osInterface, VpAllocator *allocator, VphalFeatureReport *reporting, vp::VpPlatformInterface *vpPlatformInterface, vp::VpUserFeatureControl *userFeatureControl, MediaCopyWrapper *mediaCopyWrapper);
+
+    virtual MOS_STATUS CreatePacketReuseManager(PacketPipeFactory *pPacketPipeFactory, VpUserFeatureControl *userFeatureControl);
+
+    virtual VpPacketReuseManager *NewVpPacketReuseManagerObj(PacketPipeFactory *packetPipeFactory, VpUserFeatureControl *userFeatureControl)
+    {
+        return packetPipeFactory && userFeatureControl ? MOS_New(VpPacketReuseManager, *packetPipeFactory, *userFeatureControl) : nullptr;
+    }
+
+    VpPacketReuseManager *GetPacketReUseManager()
+    {
+        return m_packetReuseMgr;
+    }
+
+    VpResourceManager *GetVpResourceManager()
+    {
+        return m_resourceManager;
+    }
+
+    bool IsPacketReUsed()
+    {
+        return m_packetReused;
+    }
+
+    bool IsVeboxInUse()
+    {
+        return m_veboxFeatureInuse;
+    }
+
+    uint32_t GetFrameCounter()
+    {
+        return m_frameCounter;
+    }
+
+    void AddFrameCount()
+    {
+        m_frameCounter++;
+    }
+
+    void InitializeOutputPipe()
+    {
+        m_vpOutputPipe      = VPHAL_OUTPUT_PIPE_MODE_INVALID;
+        m_veboxFeatureInuse = false;
+    }
+
+    VPHAL_OUTPUT_PIPE_MODE GetOutputPipe()
+    {
+        return m_vpOutputPipe;
+    }
+
+    void SetOutputPipeMode(VPHAL_OUTPUT_PIPE_MODE mode)
+    {
+        m_vpOutputPipe = mode;
+    }
+
+    void SetPacketReused(bool isReused)
+    {
+        m_packetReused = isReused;
+    }
+
+    void SetIsVeboxFeatureInuse(bool isInuse)
+    {
+        m_veboxFeatureInuse = isInuse;
+    }
+
+protected:
+    VpPacketReuseManager *m_packetReuseMgr  = nullptr;
+    VpResourceManager    *m_resourceManager = nullptr;
+    // Surface dumper fields (counter and specification)
+    uint32_t               m_frameCounter      = 0;
+    bool                   m_packetReused      = false;  //!< true is packet reused.
+    VPHAL_OUTPUT_PIPE_MODE m_vpOutputPipe      = VPHAL_OUTPUT_PIPE_MODE_INVALID;
+    bool                   m_veboxFeatureInuse = false;
+    MEDIA_CLASS_DEFINE_END(vp__VpSinglePipeContext)
+};
 
 class VpInterface
 {
@@ -461,6 +655,12 @@ public:
         return m_hwInterface;
     }
 
+    MOS_STATUS SwitchResourceManager(VpResourceManager *resManager)
+    {
+        m_resourceManager = resManager;
+        return MOS_STATUS_SUCCESS;
+    }
+
 private:
     SwFilterPipeFactory m_swFilterPipeFactory;
     HwFilterPipeFactory m_hwFilterPipeFactory;
@@ -470,6 +670,8 @@ private:
     VpAllocator& m_allocator;
     VpResourceManager* m_resourceManager;
     std::map<FeatureType, SwFilterFeatureHandler*>* m_swFilterHandler = nullptr;
+
+MEDIA_CLASS_DEFINE_END(vp__VpInterface)
 };
 }  // namespace vp
 

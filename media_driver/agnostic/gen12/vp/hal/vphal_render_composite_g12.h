@@ -67,7 +67,13 @@ public:
         m_bAvsTableBalancedFilter       = true;
         m_bApplyTwoLayersCompOptimize   = false;
         m_bYV12iAvsScaling              = true;     // On Gen9+, iAVS scaling can support YV12 input format
-        m_bEnableSamplerLumakey         = false;    // Disable sampler lumakey on Gen12.
+        m_bEnableSamplerLumakey         = true;
+
+        if (!peStatus)
+        {
+            VPHAL_PUBLIC_ASSERTMESSAGE("Got null peStatus!");
+            return;
+        }
 
         if (*peStatus != MOS_STATUS_SUCCESS)
         {
@@ -134,6 +140,10 @@ protected:
 
         return CompositeState::Initialize(pSettings, pKernelDllState);
     }
+
+    virtual bool IsDisableAVSSampler(
+        int32_t         iSources,
+        bool            isTargetY);
 };
 
 #endif // __VPHAL_RENDER_COMPOSITE_G12_H__

@@ -24,15 +24,50 @@
 //! \brief   Container class for the basic gpu resource
 //!
 
-#include "mos_graphicsresource_next.h"
-#include "mos_graphicsresource_specific_next.h"
-#include "mos_util_debug_next.h"
-#include "mos_utilities_next.h"
 #include <string>
 #include <fcntl.h>
 #include <tuple>
+#include "mos_graphicsresource_next.h"
+#include "mos_graphicsresource_specific_next.h"
+#include "mos_interface.h"
+#include "mos_util_debug.h"
 
-uint32_t GraphicsResourceNext::m_memAllocCounterGfx;
+uint32_t GraphicsResourceNext::m_memAllocCounterGfx = 0;
+
+GraphicsResourceNext::CreateParams::CreateParams(PMOS_ALLOC_GFXRES_PARAMS pParams)
+{
+    m_arraySize       = pParams->dwArraySize;
+    m_compressionMode = pParams->CompressionMode;
+    m_depth           = pParams->dwDepth;
+    m_format          = pParams->Format;
+    m_height          = pParams->dwHeight;
+    m_isCompressible  = (pParams->bIsCompressible == 1) ? true : false;
+    m_isPersistent    = (pParams->bIsPersistent == 1) ? true : false;
+    if (pParams->pBufName != nullptr)
+    {
+            m_name = pParams->pBufName;
+    }
+    m_pSystemMemory   = pParams->pSystemMemory;
+    m_tileType        = pParams->TileType;
+    m_tileModeByForce = pParams->m_tileModeByForce;
+    m_type            = pParams->Type;
+    m_flags           = pParams->Flags;
+    m_width           = pParams->dwWidth;
+    m_memType         = pParams->dwMemType;
+
+    if (pParams->ResUsageType == MOS_CODEC_RESOURCE_USAGE_BEGIN_CODEC ||
+        pParams->ResUsageType == MOS_HW_RESOURCE_DEF_MAX) // the usage type is invalid, set to default usage.
+    {
+        m_mocsMosResUsageType = MOS_MP_RESOURCE_USAGE_DEFAULT;
+    }
+    else // the usage is a valid mocs usage or pat index usage
+    {
+        m_mocsMosResUsageType = pParams->ResUsageType;
+    }
+
+    m_gmmResUsageType   = MosInterface::GetGmmResourceUsageType(m_mocsMosResUsageType);
+    m_hardwareProtected = pParams->hardwareProtected;
+};
 
 GraphicsResourceNext::GraphicsResourceNext()
 {
@@ -83,6 +118,7 @@ MOS_STATUS GraphicsResourceNext::Dump(OsContextNext* osContextPtr, uint32_t over
         if (hFile != nullptr)
         {
             MosUtilities::MosCloseHandle(hFile);
+            hFile = nullptr;
         }
         return eStatus;
     }
@@ -97,6 +133,7 @@ MOS_STATUS GraphicsResourceNext::Dump(OsContextNext* osContextPtr, uint32_t over
         if (hFile != nullptr)
         {
             MosUtilities::MosCloseHandle(hFile);
+            hFile = nullptr;
         }
         return MOS_STATUS_UNKNOWN;
     }
@@ -112,10 +149,10 @@ MOS_STATUS GraphicsResourceNext::Dump(OsContextNext* osContextPtr, uint32_t over
         nullptr)) != MOS_STATUS_SUCCESS)
     {
         MOS_OS_ASSERTMESSAGE("Failed to write to file '%s'.", sPath);
-        eStatus = MOS_STATUS_FILE_WRITE_FAILED;
         if (hFile != nullptr)
         {
             MosUtilities::MosCloseHandle(hFile);
+            hFile = nullptr;
         }
     }
 
@@ -128,6 +165,7 @@ MOS_STATUS GraphicsResourceNext::Dump(OsContextNext* osContextPtr, uint32_t over
     if (hFile != nullptr)
     {
         MosUtilities::MosCloseHandle(hFile);
+        hFile = nullptr;
     }
 
     return eStatus;

@@ -64,9 +64,8 @@ public:
     //! \return   MOS_STATUS_SUCCESS if succeeded, else error code.
     //!
     virtual MOS_STATUS Initialize(
-        PMOS_INTERFACE osInterface,
-        MhwInterfaces *mhwInterfaces) = 0;
-
+        PMOS_INTERFACE osInterface) = 0;
+protected:
     //!
     //! \brief    Creat platform specific MMD (media memory decompression) HW interface
     //! \param    [in] osInterface
@@ -77,7 +76,7 @@ public:
         PMOS_INTERFACE osInterface);
 };
 
-extern template class MediaInterfacesFactory<McpyDevice>;
+extern template class MediaFactory<uint32_t, McpyDevice>;
 
 #endif // __MEDIA_INTERFACES_MCPY_H__
 

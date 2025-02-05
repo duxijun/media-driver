@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2017-2018, Intel Corporation
+* Copyright (c) 2017-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -1623,6 +1623,7 @@ MOS_STATUS CodechalEncHevcStateG11::GetStatusReport(
 
     MOS_LOCK_PARAMS lockFlags;
     MOS_ZeroMemory(&lockFlags, sizeof(MOS_LOCK_PARAMS));
+    CODECHAL_ENCODE_CHK_NULL_RETURN(m_osInterface);
     HCPPakHWTileSizeRecord_G11* tileStatusReport = (HCPPakHWTileSizeRecord_G11*)m_osInterface->pfnLockResource(
         m_osInterface,
         &tileSizeStatusReport->sResource,
@@ -1669,6 +1670,7 @@ MOS_STATUS CodechalEncHevcStateG11::GetStatusReport(
         CODECHAL_ENCODE_CHK_STATUS_RETURN(CalculatePSNR(encodeStatus, encodeStatusReport));
     }
 
+    CODECHAL_ENCODE_CHK_COND_RETURN(totalCU == 0, "ERROR - totalCU cannot be zero.");
     encodeStatusReport->QpY = encodeStatusReport->AverageQp =
         (uint8_t)((sumQp / (double)totalCU) / 4.0); // due to TU is 4x4 and there are 4 TUs in one CU
 
@@ -1919,6 +1921,7 @@ MOS_STATUS CodechalEncHevcStateG11::ExecutePictureLevel()
             &miConditionalBatchBufferEndParams));
 
         auto mmioRegisters = m_hcpInterface->GetMmioRegisters(m_vdboxIndex);
+        CODECHAL_ENCODE_CHK_NULL_RETURN(mmioRegisters);
         MHW_MI_STORE_REGISTER_MEM_PARAMS miStoreRegMemParams;
         MHW_MI_COPY_MEM_MEM_PARAMS miCpyMemMemParams;
         if (m_hucPakStitchEnabled && m_numPipe >= 2)
@@ -3559,6 +3562,7 @@ MOS_STATUS CodechalEncHevcStateG11::SetCurbeBrcInitReset(
     BRC Parameters set as follows as per CModel equation
     ***********************************************************************/
     // BPyramid GOP
+    m_hevcSeqParams->GopRefDist = m_hevcSeqParams->GopRefDist == 0 ? 1 : m_hevcSeqParams->GopRefDist;
     if (m_hevcSeqParams->NumOfBInGop[1] != 0 || m_hevcSeqParams->NumOfBInGop[2] != 0)
     {
         curbe.DW8_BRCGopP      = ((m_hevcSeqParams->GopPicSize) / m_hevcSeqParams->GopRefDist);
@@ -6913,6 +6917,7 @@ CodechalEncHevcStateG11::CodechalEncHevcStateG11(
     MOS_ZeroMemory(m_resHucPakStitchDmemBuffer, sizeof(m_resHucPakStitchDmemBuffer));
     MOS_ZeroMemory(&m_resBrcDataBuffer, sizeof(m_resBrcDataBuffer));
 
+    CODECHAL_ENCODE_CHK_NULL_NO_STATUS_RETURN(m_osInterface);
     m_hwInterface->GetStateHeapSettings()->dwNumSyncTags    = CODECHAL_ENCODE_HEVC_NUM_SYNC_TAGS;
     m_hwInterface->GetStateHeapSettings()->dwDshSize        = CODECHAL_INIT_DSH_SIZE_HEVC_ENC;
 
@@ -6927,7 +6932,7 @@ CodechalEncHevcStateG11::CodechalEncHevcStateG11(
     m_hwInterface->GetStateHeapSettings()->dwIshSize +=
         MOS_ALIGN_CEIL(m_combinedKernelSize, (1 << MHW_KERNEL_OFFSET_SHIFT));
 
-    Mos_CheckVirtualEngineSupported(m_osInterface, false, true);
+    m_osInterface->pfnVirtualEngineSupported(m_osInterface, false, true);
     Mos_SetVirtualEngineSupported(m_osInterface, true);
 }
 
@@ -6959,7 +6964,7 @@ static uint32_t CodecHalHevcGetFileSize(char* fileName)
 {
     FILE*   fp = nullptr;
     uint32_t    fileSize = 0;
-    MOS_SecureFileOpen(&fp, fileName, "rb");
+    MosUtilities::MosSecureFileOpen(&fp, fileName, "rb");
     if (fp == nullptr)
     {
         return 0;
@@ -7014,7 +7019,7 @@ MOS_STATUS CodechalEncHevcStateG11::LoadPakCommandAndCuRecordFromFile()
     CODECHAL_ENCODE_CHK_NULL_RETURN(data);
 
     FILE* pakObj = nullptr;
-    eStatus = MOS_SecureFileOpen(&pakObj, pathOfPakCmd, "rb");
+    eStatus = MosUtilities::MosSecureFileOpen(&pakObj, pathOfPakCmd, "rb");
     if (pakObj == nullptr)
     {
         m_osInterface->pfnUnlockResource(m_osInterface, &m_resMbCodeSurface);
@@ -7032,7 +7037,7 @@ MOS_STATUS CodechalEncHevcStateG11::LoadPakCommandAndCuRecordFromFile()
 
     uint8_t*   record  = data + m_mvOffset;
     FILE*      fRecord = nullptr;
-    eStatus = MOS_SecureFileOpen(&fRecord, pathOfCuRecord, "rb");
+    eStatus = MosUtilities::MosSecureFileOpen(&fRecord, pathOfCuRecord, "rb");
     if (fRecord == nullptr)
     {
         m_osInterface->pfnUnlockResource(m_osInterface, &m_resMbCodeSurface);
@@ -8442,7 +8447,7 @@ MOS_STATUS CodechalEncHevcStateG11::ReturnCommandBuffer(PMOS_COMMAND_BUFFER cmdB
 
 MOS_STATUS CodechalEncHevcStateG11::SubmitCommandBuffer(
     PMOS_COMMAND_BUFFER cmdBuffer,
-    bool                nullRendering)
+    bool                bNullRendering)
 {
     MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
 
@@ -8457,7 +8462,7 @@ MOS_STATUS CodechalEncHevcStateG11::SubmitCommandBuffer(
         {
             CODECHAL_ENCODE_CHK_STATUS_RETURN(SetAndPopulateVEHintParams(cmdBuffer));
         }
-        CODECHAL_ENCODE_CHK_STATUS_RETURN(m_osInterface->pfnSubmitCommandBuffer(m_osInterface, cmdBuffer, nullRendering));
+        CODECHAL_ENCODE_CHK_STATUS_RETURN(m_osInterface->pfnSubmitCommandBuffer(m_osInterface, cmdBuffer, bNullRendering));
         return eStatus;
     }
 
@@ -8499,7 +8504,7 @@ MOS_STATUS CodechalEncHevcStateG11::SubmitCommandBuffer(
     if(eStatus == MOS_STATUS_SUCCESS)
     {
         CODECHAL_ENCODE_CHK_STATUS_RETURN(SetAndPopulateVEHintParams(&m_realCmdBuffer));
-        CODECHAL_ENCODE_CHK_STATUS_RETURN(m_osInterface->pfnSubmitCommandBuffer(m_osInterface, &m_realCmdBuffer, nullRendering));
+        CODECHAL_ENCODE_CHK_STATUS_RETURN(m_osInterface->pfnSubmitCommandBuffer(m_osInterface, &m_realCmdBuffer, bNullRendering));
     }
 
     return eStatus;

@@ -61,6 +61,8 @@ public:
 protected:
     VpInterface& m_vpInterface;
     FeatureType     m_type;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterFeatureHandler)
 };
 
 class SwFilterCscHandler : public SwFilterFeatureHandler
@@ -75,6 +77,8 @@ protected:
     virtual void Destory(SwFilter*& swFilter);
 protected:
     SwFilterFactory<SwFilterCsc> m_swFilterFactory;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterCscHandler)
 };
 
 class SwFilterRotMirHandler : public SwFilterFeatureHandler
@@ -89,6 +93,8 @@ protected:
     virtual void Destory(SwFilter*& swFilter);
 protected:
     SwFilterFactory<SwFilterRotMir> m_swFilterFactory;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterRotMirHandler)
 };
 
 class SwFilterScalingHandler : public SwFilterFeatureHandler
@@ -105,6 +111,8 @@ protected:
     virtual void Destory(SwFilter*& swFilter);
 protected:
     SwFilterFactory<SwFilterScaling> m_swFilterFactory;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterScalingHandler)
 };
 
 class SwFilterDnHandler : public SwFilterFeatureHandler
@@ -118,6 +126,8 @@ protected:
     virtual void Destory(SwFilter*& swFilter);
 protected:
     SwFilterFactory<SwFilterDenoise> m_swFilterFactory;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterDnHandler)
 };
 
 class SwFilterDiHandler : public SwFilterFeatureHandler
@@ -131,6 +141,8 @@ protected:
     virtual void Destory(SwFilter*& swFilter);
 protected:
     SwFilterFactory<SwFilterDeinterlace> m_swFilterFactory;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterDiHandler)
 };
 
 class SwFilterSteHandler : public SwFilterFeatureHandler
@@ -144,6 +156,8 @@ protected:
     virtual void Destory(SwFilter*& swFilter);
 protected:
     SwFilterFactory<SwFilterSte> m_swFilterFactory;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterSteHandler)
 };
 
 class SwFilterTccHandler : public SwFilterFeatureHandler
@@ -157,6 +171,8 @@ protected:
     virtual void Destory(SwFilter*& swFilter);
 protected:
     SwFilterFactory<SwFilterTcc> m_swFilterFactory;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterTccHandler)
 };
 
 class SwFilterProcampHandler : public SwFilterFeatureHandler
@@ -170,6 +186,8 @@ protected:
     virtual void Destory(SwFilter*& swFilter);
 protected:
     SwFilterFactory<SwFilterProcamp> m_swFilterFactory;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterProcampHandler)
 };
 
 class SwFilterHdrHandler : public SwFilterFeatureHandler
@@ -185,6 +203,42 @@ protected:
 
 protected:
     SwFilterFactory<SwFilterHdr> m_swFilterFactory;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterHdrHandler)
+};
+
+class SwFilterLumakeyHandler : public SwFilterFeatureHandler
+{
+public:
+    SwFilterLumakeyHandler(VpInterface &vpInterface, FeatureType featureType);
+    virtual ~SwFilterLumakeyHandler();
+    virtual bool IsFeatureEnabled(VP_PIPELINE_PARAMS &params, bool isInputPipe, int surfIndex, SwFilterPipeType pipeType);
+    virtual SwFilter *CreateSwFilter();
+
+protected:
+    virtual void Destory(SwFilter *&swFilter);
+
+protected:
+    SwFilterFactory<SwFilterLumakey>    m_swFilterFactory;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterLumakeyHandler)
+};
+
+class SwFilterBlendingHandler : public SwFilterFeatureHandler
+{
+public:
+    SwFilterBlendingHandler(VpInterface &vpInterface, FeatureType featureType);
+    virtual ~SwFilterBlendingHandler();
+    virtual bool IsFeatureEnabled(VP_PIPELINE_PARAMS &params, bool isInputPipe, int surfIndex, SwFilterPipeType pipeType);
+    virtual SwFilter *CreateSwFilter();
+
+protected:
+    virtual void Destory(SwFilter *&swFilter);
+
+protected:
+    SwFilterFactory<SwFilterBlending>   m_swFilterFactory;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterBlendingHandler)
 };
 
 class SwFilterColorFillHandler : public SwFilterFeatureHandler
@@ -200,6 +254,8 @@ protected:
 
 protected:
     SwFilterFactory<SwFilterColorFill>  m_swFilterFactory;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterColorFillHandler)
 };
 
 class SwFilterAlphaHandler : public SwFilterFeatureHandler
@@ -215,6 +271,97 @@ protected:
 
 protected:
     SwFilterFactory<SwFilterAlpha>      m_swFilterFactory;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterAlphaHandler)
+};
+
+class SwFilterCgcHandler : public SwFilterFeatureHandler
+{
+public:
+    SwFilterCgcHandler(VpInterface& vpInterface);
+    virtual ~SwFilterCgcHandler();
+    virtual bool IsFeatureEnabled(VP_PIPELINE_PARAMS& params, bool isInputPipe, int surfIndex, SwFilterPipeType pipeType);
+    virtual SwFilter* CreateSwFilter();
+protected:
+    virtual void Destory(SwFilter*& swFilter);
+protected:
+    SwFilterFactory<SwFilterCgc> m_swFilterFactory;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterCgcHandler)
+};
+
+template <class Type>
+class SwFilterAiBaseHandler : public SwFilterFeatureHandler
+{
+public:
+    SwFilterAiBaseHandler(VpInterface &vpInterface, FeatureType type) : SwFilterFeatureHandler(vpInterface, type), m_swFilterFactory(vpInterface) {}
+    virtual ~SwFilterAiBaseHandler()
+    {
+        for (auto vpSurf : m_pipeIntermediateVpSurfaces)
+        {
+            m_vpInterface.GetAllocator().DestroyVpSurface(vpSurf);
+        }
+        m_pipeIntermediateVpSurfaces.clear();
+    }
+    virtual SwFilter *CreateSwFilter(FeatureType type)
+    {
+        VP_FUNC_CALL();
+        SwFilter *swFilter = nullptr;
+        swFilter           = m_swFilterFactory.Create();
+        if (swFilter)
+        {
+            swFilter->SetFeatureType(type);
+        }
+
+        return swFilter;
+    }
+    virtual MOS_STATUS InitializePipeIntermediateSurface(PVPHAL_SURFACE vphalSurf)
+    {
+        VP_PUBLIC_CHK_NULL_RETURN(vphalSurf);
+        if (!Mos_ResourceIsNull(&vphalSurf->OsResource))
+        {
+            //this is not an empty vphal surface or the pipeline intermediate surface has already been initialized
+            return MOS_STATUS_SUCCESS;
+        }
+
+        bool        allocated       = false;
+        PVP_SURFACE originVpSurface = vphalSurf->pPipeIntermediateSurface;
+
+        VP_PUBLIC_CHK_STATUS_RETURN(m_vpInterface.GetAllocator().ReAllocateVpSurfaceWithSameConfigOfVphalSurface(
+            vphalSurf->pPipeIntermediateSurface,
+            vphalSurf,
+            "VpPipelineIntermediateSurface",
+            allocated));
+
+        if (allocated)
+        {
+            m_pipeIntermediateVpSurfaces.erase(originVpSurface);
+        }
+        m_pipeIntermediateVpSurfaces.insert(vphalSurf->pPipeIntermediateSurface);
+
+        return MOS_STATUS_SUCCESS;
+    }
+    virtual SwFilter *CreateSwFilter() = 0;
+    // This need to be implemented by derived class
+    virtual bool       IsFeatureEnabled(VP_PIPELINE_PARAMS &params, bool isInputPipe, int surfIndex, SwFilterPipeType pipeType) = 0;
+    // If the feature needs pre/post processing, then return 3, otherwise return 1
+    virtual int        GetPipeCountForProcessing(VP_PIPELINE_PARAMS &params) override                                           = 0;
+    // If the feature needs pre/post processing, then override this function, ottherwise just return MOS_STATUS_SUCCESS
+    virtual MOS_STATUS UpdateParamsForProcessing(VP_PIPELINE_PARAMS &params, int index) override                                = 0;
+
+protected:
+    virtual void Destory(SwFilter*& swFilter)
+    {
+        VP_FUNC_CALL();
+        Type *filter = dynamic_cast<Type *>(swFilter);
+        m_swFilterFactory.Destory(filter);
+    }
+
+protected:
+    SwFilterFactory<Type>  m_swFilterFactory;
+    std::set<VP_SURFACE *> m_pipeIntermediateVpSurfaces;
+
+MEDIA_CLASS_DEFINE_END(vp__SwFilterAiBaseHandler)
 };
 }
 

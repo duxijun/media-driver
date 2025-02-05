@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2011-2020, Intel Corporation
+* Copyright (c) 2011-2024, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -311,12 +311,26 @@ MOS_STATUS CodechalDecodeAvc::AllocateInvalidRefBuffer()
     {
         CODECHAL_DECODE_CHK_STATUS_RETURN(CodecHalGetResourceInfo(m_osInterface, &m_destSurface));
 
+        MOS_MEMCOMP_STATE mmcMode = MOS_MEMCOMP_DISABLED;
+#ifdef _MMC_SUPPORTED
+        if(m_mmc != nullptr && m_mmc->IsMmcEnabled())
+        {
+            CODECHAL_DECODE_CHK_STATUS_RETURN(
+            m_osInterface->pfnGetMemoryCompressionMode(
+                m_osInterface,
+                &m_destSurface.OsResource,
+                &mmcMode));
+        }
+#endif
+
         MOS_SURFACE surface;
         CODECHAL_DECODE_CHK_STATUS_MESSAGE_RETURN(AllocateSurface(
                                                       &surface,
                                                       m_destSurface.dwPitch,
                                                       m_destSurface.dwHeight,
-                                                      "InvalidRefBuffer"),
+                                                      "InvalidRefBuffer",
+                                                      Format_NV12,
+                                                      mmcMode != MOS_MEMCOMP_DISABLED ? true : false),
             "Failed to allocate invalid reference buffer.");
         m_resInvalidRefBuffer = surface.OsResource;
 
@@ -381,6 +395,35 @@ MOS_STATUS CodechalDecodeAvc::SetAndAllocateDmvBufferIndex(
             avcDmvBufferSize,
             "MvBuffer",
             true),
+            "Failed to allocate MV Buffer.");
+    }
+
+    *dmvIdx = index;
+    return eStatus;
+}
+
+
+MOS_STATUS CodechalDecodeAvc::SetAndAllocateDmvBufferIndexMismatched(
+    uint8_t             frameIdx,
+    uint32_t            avcDmvBufferSize,
+    uint8_t            *dmvIdx,
+    MOS_RESOURCE       *avcDmvBuffers)
+{
+    MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
+
+    CODECHAL_DECODE_CHK_NULL_RETURN(dmvIdx);
+    CODECHAL_DECODE_CHK_NULL_RETURN(avcDmvBuffers);
+
+    uint8_t index = frameIdx;
+
+    if (Mos_ResourceIsNull(&avcDmvBuffers[index]))
+    {
+        // Allocate DMV buffer if it has not been allocated already.
+        CODECHAL_DECODE_CHK_STATUS_MESSAGE_RETURN(AllocateBuffer(
+                                                      &avcDmvBuffers[index],
+                                                      avcDmvBufferSize,
+                                                      "MvBuffer",
+                                                      true),
             "Failed to allocate MV Buffer.");
     }
 
@@ -516,14 +559,28 @@ MOS_STATUS CodechalDecodeAvc::SetPictureStructs()
     // Override reference list with ref surface passed from DDI
     uint8_t surfCount = 0;
     uint8_t surfIndex = 0;
-    while (surfCount < m_refSurfaceNum && surfIndex < CODEC_AVC_NUM_UNCOMPRESSED_SURFACE)
+    if (m_osInterface->pfnIsMismatchOrderProgrammingSupported())
     {
-        if (!Mos_ResourceIsNull(&m_refFrameSurface[surfIndex].OsResource))
+        while (surfIndex < CODEC_AVC_NUM_UNCOMPRESSED_SURFACE)
         {
-            m_avcRefList[surfIndex]->resRefPic = m_refFrameSurface[surfIndex].OsResource;
-            surfCount++;
+            if (!Mos_ResourceIsNull(&m_refFrameSurface[surfIndex].OsResource))
+            {
+                m_avcRefList[surfIndex]->resRefPic = m_refFrameSurface[surfIndex].OsResource;
+            }
+            surfIndex++;
         }
-        surfIndex++;
+    }
+    else
+    {
+        while (surfCount < m_refSurfaceNum && surfIndex < CODEC_AVC_NUM_UNCOMPRESSED_SURFACE)
+        {
+            if (!Mos_ResourceIsNull(&m_refFrameSurface[surfIndex].OsResource))
+            {
+                m_avcRefList[surfIndex]->resRefPic = m_refFrameSurface[surfIndex].OsResource;
+                surfCount++;
+            }
+            surfIndex++;
+        }
     }
 
     uint8_t index, duplicatedIdx;
@@ -600,19 +657,50 @@ MOS_STATUS CodechalDecodeAvc::SetPictureStructs()
 
     if (!m_isSecondField)
     {
-        CODECHAL_DECODE_CHK_STATUS_RETURN(SetAndAllocateDmvBufferIndex(
-            &m_avcDmvList[0],
-            (bool)picParams->pic_fields.reference_pic_flag,
-            currPic.FrameIdx,
-            m_avcDmvBufferSize,
-            &m_avcMvBufferIndex,
-            m_resAvcDmvBuffers));
+        if (m_osInterface->pfnIsMismatchOrderProgrammingSupported())
+        {
+            for (i = 0; i < CODEC_AVC_MAX_NUM_REF_FRAME; i++)
+            {
+                auto frameIdx = picParams->RefFrameList[i].FrameIdx;
+                if (frameIdx != CODECHAL_NUM_UNCOMPRESSED_SURFACE_HEVC)
+                {
+                    CODECHAL_DECODE_CHK_STATUS_RETURN(SetAndAllocateDmvBufferIndexMismatched(
+                        frameIdx,
+                        m_avcDmvBufferSize,
+                        &m_avcMvBufferIndex,
+                        m_resAvcDmvBuffers));
+                    dmvidx = m_avcMvBufferIndex;
+                    m_avcRefList[frameIdx]->ucDMVIdx[0] = dmvidx;
+                    m_avcRefList[frameIdx]->ucDMVIdx[1] = dmvidx;
+                }
+            }
+            CODECHAL_DECODE_CHK_STATUS_RETURN(SetAndAllocateDmvBufferIndexMismatched(
+                currPic.FrameIdx,
+                m_avcDmvBufferSize,
+                &m_avcMvBufferIndex,
+                m_resAvcDmvBuffers));
+            dmvidx = m_avcMvBufferIndex;
 
-        dmvidx = m_avcMvBufferIndex;
+            //first and second field will use the same DMV buffer in field mode
+            m_avcRefList[currPic.FrameIdx]->ucDMVIdx[0] = dmvidx;
+            m_avcRefList[currPic.FrameIdx]->ucDMVIdx[1] = dmvidx;
+        }
+        else
+        {
+            CODECHAL_DECODE_CHK_STATUS_RETURN(SetAndAllocateDmvBufferIndex(
+                &m_avcDmvList[0],
+                (bool)picParams->pic_fields.reference_pic_flag,
+                currPic.FrameIdx,
+                m_avcDmvBufferSize,
+                &m_avcMvBufferIndex,
+                m_resAvcDmvBuffers));
 
-        //first and second field will use the same DMV buffer in field mode
-        m_avcRefList[currPic.FrameIdx]->ucDMVIdx[0] = dmvidx;
-        m_avcRefList[currPic.FrameIdx]->ucDMVIdx[1] = dmvidx;
+            dmvidx = m_avcMvBufferIndex;
+
+            //first and second field will use the same DMV buffer in field mode
+            m_avcRefList[currPic.FrameIdx]->ucDMVIdx[0] = dmvidx;
+            m_avcRefList[currPic.FrameIdx]->ucDMVIdx[1] = dmvidx;
+        }
     }
     else
     {
@@ -685,7 +773,7 @@ MOS_STATUS CodechalDecodeAvc::SetPictureStructs()
             picIdx[i].bValid = true;
             picIdx[i].ucPicIdx = index;
 
-            if (!CodecHal_PictureIsInvalid(prevPic))
+            if (!CodecHal_PictureIsInvalid(prevPic) && !m_osInterface->pfnIsMismatchOrderProgrammingSupported())
             {
                 for (ii = 0; ii < m_avcRefList[prevPic.FrameIdx]->ucNumRef; ii++)
                 {
@@ -734,6 +822,14 @@ MOS_STATUS CodechalDecodeAvc::SetPictureStructs()
     m_avcRefList[currPic.FrameIdx]->ucNumRef                = ii;
     m_avcRefList[currPic.FrameIdx]->usNonExistingFrameFlags = nonExistingFrameFlags;
     m_avcRefList[currPic.FrameIdx]->uiUsedForReferenceFlags = usedForReferenceFlags;
+
+    if (m_osInterface->pfnIsMismatchOrderProgrammingSupported())
+    {
+        for (uint32_t ii = 0; ii < CODEC_AVC_NUM_UNCOMPRESSED_SURFACE; ii++)
+        {
+            m_avcRefList[ii]->ucFrameId = 0x7f;
+        }
+    }
 
     SetFrameStoreIds(currPic.FrameIdx);
 
@@ -924,7 +1020,10 @@ MOS_STATUS CodechalDecodeAvc::AllocateResourcesVariableSizes()
         (picHeightInMB > m_picHeightInMbLastMaxAlloced) ||
         (m_avcDmvBufferSize == 0))
     {
-        for (ctr = 0; ctr < CODEC_AVC_NUM_DMV_BUFFERS; ctr++)
+        uint32_t maxMvBuf = m_osInterface->pfnIsMismatchOrderProgrammingSupported() ?
+            CODEC_AVC_NUM_UNCOMPRESSED_SURFACE :
+            CODEC_AVC_NUM_DMV_BUFFERS;
+        for (ctr = 0; ctr < maxMvBuf; ctr++)
         {
             if (!Mos_ResourceIsNull(&m_resAvcDmvBuffers[ctr]))
             {
@@ -1144,7 +1243,10 @@ CodechalDecodeAvc::~CodechalDecodeAvc()
             &m_resMonoPictureChromaBuffer);
     }
 
-    for (uint32_t ctr = 0; ctr < CODEC_AVC_NUM_DMV_BUFFERS; ctr++)
+    uint32_t maxMvBuf = m_osInterface->pfnIsMismatchOrderProgrammingSupported() ?
+        CODEC_AVC_NUM_UNCOMPRESSED_SURFACE :
+        CODEC_AVC_NUM_DMV_BUFFERS;
+    for (uint32_t ctr = 0; ctr < maxMvBuf; ctr++)
     {
         m_osInterface->pfnFreeResource(
             m_osInterface,
@@ -1307,6 +1409,14 @@ MOS_STATUS CodechalDecodeAvc::SetFrameStates()
         m_secondField = true;
     }
 
+    if (m_pCodechalOcaDumper)
+    {
+        m_pCodechalOcaDumper->SetAvcDecodeParam(
+            m_avcPicParams,
+            m_avcSliceParams,
+            m_numSlices);
+    }
+
     CODECHAL_DEBUG_TOOL(
         m_debugInterface->m_currPic     = m_crrPic;
         m_debugInterface->m_secondField = m_secondField;
@@ -1446,10 +1556,10 @@ MOS_STATUS CodechalDecodeAvc::InitPicMhwParams(
                     &dstSurface));
 
                 m_debugInterface->m_refIndex = frameId;
-                std::string refSurfName      = "RefSurf" + std::to_string(static_cast<uint32_t>(m_debugInterface->m_refIndex));
+                std::string refSurfName      = "RefSurf[" + std::to_string(static_cast<uint32_t>(m_debugInterface->m_refIndex)) + "]";
                 CODECHAL_DECODE_CHK_STATUS_RETURN(m_debugInterface->DumpYUVSurface(
                     &dstSurface,
-                    CodechalDbgAttr::attrReferenceSurfaces,
+                    CodechalDbgAttr::attrDecodeReferenceSurfaces,
                     refSurfName.data()));)
 
             if (frameId < firstValidFrameId)
@@ -1509,6 +1619,37 @@ MOS_STATUS CodechalDecodeAvc::InitPicMhwParams(
     picMhwParams->AvcDirectmodeParams.avcRefList              = (void**)m_avcRefList;
     picMhwParams->AvcDirectmodeParams.bPicIdRemappingInUse    = m_picIdRemappingInUse;
     picMhwParams->AvcDirectmodeParams.presMvcDummyDmvBuffer   = &(m_resMvcDummyDmvBuffer[(m_avcPicParams->seq_fields.direct_8x8_inference_flag) ? 1 : 0]);
+
+    CODECHAL_DEBUG_TOOL(
+
+        CODEC_REF_LIST * *refList;
+        MHW_MI_CHK_NULL(refList = (CODEC_REF_LIST **)picMhwParams->AvcDirectmodeParams.avcRefList);
+
+        for (auto i = 0; i < CODEC_MAX_NUM_REF_FRAME; i++)
+        {
+            if (picMhwParams->AvcDirectmodeParams.pAvcPicIdx[i].bValid)
+            {
+                uint8_t idx   = picMhwParams->AvcDirectmodeParams.pAvcPicIdx[i].ucPicIdx;
+                uint8_t picID = picMhwParams->AvcDirectmodeParams.bPicIdRemappingInUse ? i : refList[idx]->ucFrameId;
+                uint8_t mvIdx = refList[idx]->ucDMVIdx[0];
+
+                // dump Reference mvdata
+                std::string mvBufDumpName = "_DEC_Ref_MV_" + std::to_string(i);
+                CODECHAL_DECODE_CHK_STATUS_RETURN(m_debugInterface->DumpBuffer(
+                    &picMhwParams->AvcDirectmodeParams.presAvcDmvBuffers[mvIdx],
+                    CodechalDbgAttr::attrMvData,
+                    mvBufDumpName.c_str(),
+                    m_avcDmvBufferSize));
+            }
+        }
+
+        // dump Current mvdata
+        CODECHAL_DECODE_CHK_STATUS_RETURN(m_debugInterface->DumpBuffer(
+        &picMhwParams->AvcDirectmodeParams.presAvcDmvBuffers[picMhwParams->AvcDirectmodeParams.ucAvcDmvIdx],
+            CodechalDbgAttr::attrMvData,
+            "DEC_Cur_MV_",
+            m_avcDmvBufferSize));
+        );
 
     return eStatus;
 }
@@ -1905,6 +2046,8 @@ MOS_STATUS CodechalDecodeAvc::DecodePrimitiveLevel()
     //    m_debugInterface,
     //    &cmdBuffer));
     )
+
+    HalOcaInterface::DumpCodechalParam(cmdBuffer, (MOS_CONTEXT_HANDLE)m_osInterface->pOsContext, m_pCodechalOcaDumper, CODECHAL_AVC);
     HalOcaInterface::On1stLevelBBEnd(cmdBuffer, *m_osInterface);
 
     CODECHAL_DECODE_CHK_STATUS_RETURN(m_osInterface->pfnSubmitCommandBuffer(m_osInterface, &cmdBuffer, m_videoContextUsesNullHw));
@@ -2014,7 +2157,7 @@ CodechalDecodeAvc::CodechalDecodeAvc(
     CodechalDecode(hwInterface, debugInterface, standardInfo)
 {
     m_mmc = nullptr;
-
+    m_hwInterface = hwInterface;
     // Parameters passed by application
     m_picWidthInMb                = 0;
     m_picHeightInMb               = 0;
@@ -2039,7 +2182,7 @@ CodechalDecodeAvc::CodechalDecodeAvc(
     MOS_ZeroMemory(&m_resMfdDeblockingFilterRowStoreScratchBuffer, sizeof(MOS_RESOURCE));
     MOS_ZeroMemory(&m_resBsdMpcRowStoreScratchBuffer, sizeof(MOS_RESOURCE));
     MOS_ZeroMemory(&m_resMprRowStoreScratchBuffer, sizeof(MOS_RESOURCE));
-    MOS_ZeroMemory(&m_resAvcDmvBuffers, (sizeof(MOS_RESOURCE) * CODEC_AVC_NUM_DMV_BUFFERS));
+    MOS_ZeroMemory(&m_resAvcDmvBuffers, (sizeof(MOS_RESOURCE) * CODEC_AVC_NUM_UNCOMPRESSED_SURFACE));
     MOS_ZeroMemory(&m_resInvalidRefBuffer, sizeof(MOS_RESOURCE));
     MOS_ZeroMemory(&m_resMvcDummyDmvBuffer, (sizeof(MOS_RESOURCE) * 2));
     MOS_ZeroMemory(&m_destSurface, sizeof(MOS_SURFACE));

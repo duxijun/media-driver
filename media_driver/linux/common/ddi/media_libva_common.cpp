@@ -183,6 +183,7 @@ PDDI_MEDIA_SURFACE DdiMedia_ReplaceSurfaceWithNewFormat(PDDI_MEDIA_SURFACE surfa
     }
     //create new dst surface and copy the structure
     PDDI_MEDIA_SURFACE dstSurface = (DDI_MEDIA_SURFACE *)MOS_AllocAndZeroMemory(sizeof(DDI_MEDIA_SURFACE));
+    DDI_CHK_NULL(dstSurface, "nullptr dstSurface", nullptr);
     if (nullptr == surfaceElement)
     {
         MOS_FreeMemory(dstSurface);
@@ -190,11 +191,33 @@ PDDI_MEDIA_SURFACE DdiMedia_ReplaceSurfaceWithNewFormat(PDDI_MEDIA_SURFACE surfa
     }
 
     MOS_SecureMemcpy(dstSurface,sizeof(DDI_MEDIA_SURFACE),surface,sizeof(DDI_MEDIA_SURFACE));
-    DDI_CHK_NULL(dstSurface, "nullptr dstSurface", nullptr);
     dstSurface->format = expectedFormat;
     dstSurface->uiLockedBufID = VA_INVALID_ID;
     dstSurface->uiLockedImageID = VA_INVALID_ID;
     dstSurface->pSurfDesc = nullptr;
+
+    // copy for some pointer resource
+    if(dstSurface->pShadowBuffer)
+    {
+        dstSurface->pShadowBuffer = (PDDI_MEDIA_BUFFER)MOS_AllocAndZeroMemory(sizeof(DDI_MEDIA_BUFFER));
+        if (nullptr == dstSurface->pShadowBuffer)
+        {
+            MOS_FreeMemory(dstSurface);
+            return nullptr;
+        }
+        MOS_SecureMemcpy(dstSurface->pShadowBuffer, sizeof(DDI_MEDIA_BUFFER), surface->pShadowBuffer, sizeof(DDI_MEDIA_BUFFER));
+        mos_bo_reference(dstSurface->pShadowBuffer->bo);
+
+        dstSurface->pShadowBuffer->pGmmResourceInfo = (GMM_RESOURCE_INFO *)MOS_AllocAndZeroMemory(sizeof(GMM_RESOURCE_INFO));
+        if (nullptr == dstSurface->pShadowBuffer->pGmmResourceInfo)
+        {
+            MOS_FreeMemory(dstSurface->pShadowBuffer);
+            MOS_FreeMemory(dstSurface);
+            return nullptr;
+        }
+        MOS_SecureMemcpy(dstSurface->pShadowBuffer->pGmmResourceInfo, sizeof(GMM_RESOURCE_INFO), surface->pShadowBuffer->pGmmResourceInfo, sizeof(GMM_RESOURCE_INFO));
+    }
+
     //lock surface heap
     DdiMediaUtil_LockMutex(&mediaCtx->SurfaceMutex);
     uint32_t i;
@@ -210,16 +233,21 @@ PDDI_MEDIA_SURFACE DdiMedia_ReplaceSurfaceWithNewFormat(PDDI_MEDIA_SURFACE surfa
     //if cant find
     if(i == surface->pMediaCtx->pSurfaceHeap->uiAllocatedHeapElements)
     {
-        DdiMediaUtil_LockMutex(&mediaCtx->SurfaceMutex);
+        DdiMediaUtil_UnLockMutex(&mediaCtx->SurfaceMutex);
+        if(dstSurface->pShadowBuffer)
+        {
+            MOS_FreeMemory(dstSurface->pShadowBuffer->pGmmResourceInfo);
+            MOS_FreeMemory(dstSurface->pShadowBuffer);
+        }
         MOS_FreeMemory(dstSurface);
         return nullptr;
     }
-    //FreeSurface
-    DdiMediaUtil_FreeSurface(surface);
-    MOS_FreeMemory(surface);
     //CreateNewSurface
     DdiMediaUtil_CreateSurface(dstSurface,mediaCtx);
     surfaceElement->pSurface = dstSurface;
+    //FreeSurface
+    DdiMediaUtil_FreeSurface(surface);
+    MOS_FreeMemory(surface);
 
     DdiMediaUtil_UnLockMutex(&mediaCtx->SurfaceMutex);
 
@@ -245,12 +273,18 @@ PDDI_MEDIA_SURFACE DdiMedia_ReplaceSurfaceWithVariant(PDDI_MEDIA_SURFACE surface
     {
         return nullptr;
     }
+
+    DdiMediaUtil_LockMutex(&mediaCtx->BufferMutex);
     PDDI_MEDIA_SURFACE_HEAP_ELEMENT  surfaceElement = (PDDI_MEDIA_SURFACE_HEAP_ELEMENT)surface->pMediaCtx->pSurfaceHeap->pHeapBase;
+    DdiMediaUtil_UnLockMutex(&mediaCtx->BufferMutex);
     if (nullptr == surfaceElement)
     {
         return nullptr;
     }
+    DdiMediaUtil_LockMutex(&mediaCtx->BufferMutex);
     surfaceElement += vaID;
+    DdiMediaUtil_UnLockMutex(&mediaCtx->BufferMutex);
+
     aligned_format = surface->format;
     switch (surface->format)
     {
@@ -314,7 +348,11 @@ PDDI_MEDIA_SURFACE DdiMedia_ReplaceSurfaceWithVariant(PDDI_MEDIA_SURFACE surface
         return surface;
     }
     //replace the surface
+    DdiMediaUtil_LockMutex(&mediaCtx->BufferMutex);
+    surfaceElement = (PDDI_MEDIA_SURFACE_HEAP_ELEMENT)surface->pMediaCtx->pSurfaceHeap->pHeapBase;
+    surfaceElement += vaID;
     surfaceElement->pSurface = dstSurface;
+    DdiMediaUtil_UnLockMutex(&mediaCtx->BufferMutex);
     //FreeSurface
     DdiMediaUtil_FreeSurface(surface);
     MOS_FreeMemory(surface);
@@ -397,7 +435,7 @@ int32_t DdiMedia_GetGpuPriority (VADriverContextP ctx, VABufferID *buffers, int3
             if (updateSessionPriority)
             {
                 *updatePriority = true;
-                if(priorityValue >= 0 && priorityValue <= CONTEXT_PRIORITY_MAX)
+                if(priorityValue <= CONTEXT_PRIORITY_MAX)
                 {
                     *priority = priorityValue - CONTEXT_PRIORITY_MAX/2;
                 }

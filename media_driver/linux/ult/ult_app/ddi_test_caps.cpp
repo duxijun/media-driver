@@ -56,6 +56,7 @@ int Test_QueryConfigProfiles(VADriverContextP ctx, vector<FeatureID> &queriedFea
     int ret = ctx->vtable->vaQueryConfigProfiles(ctx, profile_list, &num_profiles);
     if (ret)
     {
+        free(profile_list);
         return -1;
     }
 
@@ -70,6 +71,7 @@ int Test_QueryConfigProfiles(VADriverContextP ctx, vector<FeatureID> &queriedFea
         }
         else if (ret)
         {
+            free(profile_list);
             return -1;
         }
         else
@@ -80,6 +82,8 @@ int Test_QueryConfigProfiles(VADriverContextP ctx, vector<FeatureID> &queriedFea
             }
         }
     }
+
+    free(profile_list);
 
     return ret;
 }
@@ -109,5 +113,54 @@ TEST_F(MediaCapsDdiTest, DecodeEncodeProfile)
         ret = m_driverLoader.CloseDriver();
         EXPECT_EQ (VA_STATUS_SUCCESS , ret) << "Platform = " << g_platformName[platforms[i]]
             << ", Failed function = m_driverLoader.CloseDriver" << endl;
+    }
+}
+
+int testfunction(int a)
+{
+    return a + 1;
+}
+
+TEST_F(MediaCapsDdiTest, TraceInterfaceTest)
+{
+    //EXPECT_EQ(0, _TR_COUNT()); //compiler dependent behavior
+    EXPECT_EQ(1, _TR_COUNT(1));
+    EXPECT_EQ(2, _TR_COUNT(1, 2));
+    EXPECT_EQ(10, _TR_COUNT(1, 2, 3, 4, 5, 6, 7, 8, 9, 10));
+
+    int i = 1;
+    char b = 2;
+    uint64_t l = 3;
+    char a[] = {1, 2};
+
+    {
+        TR_FILL_PARAM(i, b);
+        EXPECT_EQ(5, sizeof(_buf));
+        EXPECT_EQ(1, *(int *)_buf);
+    }
+    {
+        TR_FILL_PARAM(b, l);
+        EXPECT_EQ(9, sizeof(_buf));
+        EXPECT_EQ(2, *(char *)_buf);
+    }
+    {
+        TR_FILL_PARAM(l, a);
+        EXPECT_EQ(10, sizeof(_buf));
+        EXPECT_EQ(3, *(uint64_t *)_buf);
+    }
+    {
+        TR_FILL_PARAM(b, (int)l);
+        EXPECT_EQ(5, sizeof(_buf));
+        EXPECT_EQ(3, *(int *)(_buf + 1));
+    }
+    {
+        TR_FILL_PARAM(b, *(short *)a);
+        EXPECT_EQ(3, sizeof(_buf));
+        EXPECT_EQ(0x201, *(short *)(_buf + 1));
+    }
+    {
+        TR_FILL_PARAM(b, testfunction(2));
+        EXPECT_EQ(5, sizeof(_buf));
+        EXPECT_EQ(3, *(int *)(_buf + 1));
     }
 }

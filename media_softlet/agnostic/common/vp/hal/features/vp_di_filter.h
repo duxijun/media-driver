@@ -61,15 +61,11 @@ public:
         return m_pVeboxDiParams;
     }
 
-    PRENDER_DI_FMD_PARAMS GetRenderParams()
-    {
-        return m_pRenderDiFmdParams;
-    }
-
 protected:
     FeatureParamDeinterlace     m_diParams = {};
     PVEBOX_DI_PARAMS            m_pVeboxDiParams = nullptr;
-    PRENDER_DI_FMD_PARAMS       m_pRenderDiFmdParams = nullptr;
+
+MEDIA_CLASS_DEFINE_END(vp__VpDiFilter)
 };
 
 struct HW_FILTER_DI_PARAM : public HW_FILTER_PARAM
@@ -89,6 +85,8 @@ public:
 
 private:
     HW_FILTER_DI_PARAM m_Params = {};
+
+MEDIA_CLASS_DEFINE_END(vp__HwFilterDiParameter)
 };
 
 class VpDiParameter : public VpPacketParameter
@@ -104,6 +102,8 @@ private:
     MOS_STATUS Initialize(HW_FILTER_DI_PARAM&params);
 
     VpDiFilter m_diFilter;
+
+MEDIA_CLASS_DEFINE_END(vp__VpDiParameter)
 };
 
 class PolicyDiHandler : public PolicyFeatureHandler
@@ -113,11 +113,10 @@ public:
     virtual ~PolicyDiHandler();
     virtual bool IsFeatureEnabled(VP_EXECUTE_CAPS vpExecuteCaps);
     virtual HwFilterParameter *CreateHwFilterParam(VP_EXECUTE_CAPS vpExecuteCaps, SwFilterPipe &swFilterPipe, PVP_MHWINTERFACE pHwInterface);
-    virtual MOS_STATUS         UpdateFeaturePipe(VP_EXECUTE_CAPS caps, SwFilter &feature, SwFilterPipe &featurePipe, SwFilterPipe &executePipe, bool isInputPipe, int index);
 
     static VpPacketParameter* CreatePacketParam(HW_FILTER_PARAM& param)
     {
-        if (param.type != FeatureTypeDiOnVebox && param.type != FeatureTypeDiFmdOnRender)
+        if (param.type != FeatureTypeDiOnVebox)
         {
             VP_PUBLIC_ASSERTMESSAGE("Invalid parameter for Deinterlace!");
             return nullptr;
@@ -129,6 +128,8 @@ public:
 
 private:
     PacketParamFactory<VpDiParameter> m_PacketParamFactory;
+
+MEDIA_CLASS_DEFINE_END(vp__PolicyDiHandler)
 };
 }
 #endif

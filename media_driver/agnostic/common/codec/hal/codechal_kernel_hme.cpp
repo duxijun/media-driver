@@ -52,7 +52,7 @@ CodechalKernelHme::~CodechalKernelHme()
 
 MOS_STATUS CodechalKernelHme::AllocateResources()
 {
-    MOS_ALLOC_GFXRES_PARAMS allocParamsForBuffer2D;
+    MOS_ALLOC_GFXRES_PARAMS allocParamsForBuffer2D = {};
 
     MEDIA_WA_TABLE* waTable = m_osInterface->pfnGetWaTable(m_osInterface);
     uint32_t memType = (MEDIA_IS_WA(waTable, WaForceAllocateLML4)) ? MOS_MEMPOOL_DEVICEMEMORY : 0;
@@ -335,6 +335,7 @@ MOS_STATUS CodechalKernelHme::SendSurfaces(PMOS_COMMAND_BUFFER cmd, MHW_KERNEL_S
             surfaceParams.bIs2DSurface = true;
             surfaceParams.bMediaBlockRW = true;
             surfaceParams.psSurface = GetSurface(SurfaceId::me4xDistortionBuffer);
+            CODECHAL_ENCODE_CHK_NULL_RETURN(surfaceParams.psSurface);
             surfaceParams.psSurface->dwHeight = m_surfaceParam.downScaledHeightInMb * 4 * 10;
             surfaceParams.dwOffset = m_meDistortionBottomFieldOffset;
             surfaceParams.dwBindingTableOffset = BindingTableOffset::meDistortionSurface;

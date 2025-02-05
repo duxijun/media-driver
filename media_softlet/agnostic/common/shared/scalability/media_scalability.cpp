@@ -27,8 +27,12 @@
 //!           this file is for the base interface which is shared by all components.
 //!
 
+#include "media_scalability_defs.h"
+#include "media_scalability_option.h"
 #include "media_scalability.h"
-#include "mos_os_virtualengine.h"
+#include "mos_interface.h"
+#include "mos_utilities.h"
+
 
 MediaScalability::MediaScalability(MediaContext *mediaContext) :
     m_mediaContext(mediaContext) 
@@ -41,44 +45,13 @@ MediaScalability::MediaScalability(MediaContext *mediaContext) :
 
 bool MediaScalability::IsScalabilityModeMatched(ScalabilityPars *params)
 {
-    bool isMatched = false;
-
-
-#if (_DEBUG || _RELEASE_INTERNAL)
-
-    if (m_osInterface == nullptr)
-    {
-        return false;
-    }
-    if (m_osInterface->bEnableDbgOvrdInVE)
-    {
-        isMatched = true;
-    }
-    else
-#endif
-    {
-        isMatched = m_scalabilityOption->IsScalabilityOptionMatched(params);
-    }
-
-    return isMatched;
+    return m_scalabilityOption->IsScalabilityOptionMatched(params);
 }
 
 bool MediaScalability::IsScalabilityModeMatched(MediaScalabilityOption &scalabOption)
 {
-#if (_DEBUG || _RELEASE_INTERNAL)
-    if (m_osInterface == nullptr)
-    {
-        return false;
-    }
-    if (m_osInterface->bEnableDbgOvrdInVE)
-    {
-        return true;
-    }
-    else
-#endif
-    {
-        return m_scalabilityOption->IsScalabilityOptionMatched(scalabOption);
-    }
+
+    return m_scalabilityOption->IsScalabilityOptionMatched(scalabOption);
 }
 
 bool MediaScalability::IsGpuCtxCreateOptionMatched(PMOS_GPUCTX_CREATOPTIONS_ENHANCED gpuCtxCreateOption1, PMOS_GPUCTX_CREATOPTIONS_ENHANCED gpuCtxCreateOption2)
@@ -114,10 +87,17 @@ MOS_STATUS MediaScalability::VerifySpaceAvailable(uint32_t requestedSize, uint32
                 m_osInterface,
                 requestedPatchListSize);
         }
-        statusCmdBuf = (MOS_STATUS)m_osInterface->pfnVerifyCommandBufferSize(
-            m_osInterface,
-            requestedSize,
-            0);
+        if (m_osInterface->pfnVerifyCommandBufferSize)
+        {
+            statusCmdBuf = (MOS_STATUS)m_osInterface->pfnVerifyCommandBufferSize(
+                m_osInterface,
+                requestedSize,
+                0);
+        }
+        else
+        {
+            statusCmdBuf = MOS_STATUS_SUCCESS;
+        }
 
         if (statusPatchList != MOS_STATUS_SUCCESS && statusCmdBuf != MOS_STATUS_SUCCESS)
         {
@@ -161,34 +141,17 @@ MOS_STATUS MediaScalability::VerifySpaceAvailable(uint32_t requestedSize, uint32
 
 MOS_STATUS MediaScalability::Destroy()
 {
-    if (m_osInterface->apoMosEnabled)
+    if (m_osInterface->apoMosEnabled || m_osInterface->apoMosForLegacyRuntime)
     {
         if (m_veState)
         {
-            SCALABILITY_CHK_STATUS_RETURN(MosInterface::SetVirtualEngineState(m_osInterface->osStreamState, m_veState));
-            return MosInterface::DestroyVirtualEngineState(m_osInterface->osStreamState);
+            SCALABILITY_CHK_NULL_RETURN(m_osInterface->osStreamState);
+            m_osInterface->osStreamState->virtualEngineInterface = m_veState;
+            return m_osInterface->pfnDestroyVirtualEngineState(m_osInterface->osStreamState);
         }
 
         // No VE state to destroy in some scalability instances
         return MOS_STATUS_SUCCESS;
-    }
-
-    if (m_veInterface)
-    {
-        if(m_veInterface->pfnVEDestroy)
-        {
-            m_veInterface->pfnVEDestroy(m_veInterface);
-        }
-        MOS_FreeMemAndSetNull(m_veInterface);
-    }
-    else
-    {
-        // For VE not enabled/supported case, such as vp vebox on some platform, m_veInterface is nullptr.
-        // MOS_STATUS_SUCCESS should be returned for such case.
-        if (MOS_VE_SUPPORTED(m_osInterface))
-        {
-            SCALABILITY_CHK_NULL_RETURN(m_veInterface);
-        }
     }
 
     return MOS_STATUS_SUCCESS;

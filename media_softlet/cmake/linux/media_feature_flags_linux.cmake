@@ -54,6 +54,7 @@ else()
 endif()
 
 # features are always able to open
+bs_set_if_undefined(VVC_Decode_Supported "yes")
 bs_set_if_undefined(AV1_Decode_Supported "yes")
 bs_set_if_undefined(AVC_Decode_Supported "yes")
 bs_set_if_undefined(HEVC_Decode_Supported "yes")
@@ -139,6 +140,10 @@ if(${AV1_Decode_Supported} STREQUAL "yes")
     add_definitions(-D_AV1_DECODE_SUPPORTED)
 endif()
 
+if(${VVC_Decode_Supported} STREQUAL "yes")
+    add_definitions(-D_VVC_DECODE_SUPPORTED)
+endif()
+
 if(${CMRT_HEVC_ENC_FEI_Supported} STREQUAL "yes")
     add_definitions(-DHEVC_FEI_ENABLE_CMRT)
 endif()
@@ -162,6 +167,9 @@ if(${VP_SFC_Supported} STREQUAL "yes")
 else()
     add_definitions(-D__VPHAL_SFC_SUPPORTED=0)
 endif()
+
+bs_set_if_undefined(CLASS_TRACE 0)
+add_definitions(-DCLASS_TRACE=${CLASS_TRACE})
 
 if(ENABLE_KERNELS)
     add_definitions(-DENABLE_KERNELS)

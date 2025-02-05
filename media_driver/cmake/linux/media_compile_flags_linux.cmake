@@ -36,6 +36,7 @@ set(MEDIA_COMPILER_FLAGS_COMMON
     -Werror=format-security
     -Werror=non-virtual-dtor
     -Werror=return-type
+    -Wno-overloaded-virtual
 
     # General optimization options
     -finline-functions
@@ -47,11 +48,12 @@ set(MEDIA_COMPILER_FLAGS_COMMON
     # Other common flags
     -fmessage-length=0
     -fvisibility=hidden
-    -fstack-protector
     -fdata-sections
     -ffunction-sections
     -Wl,--gc-sections
 
+    # Enable c++14 features
+    -std=c++14
     # -m32 or -m64
     -m${ARCH}
 
@@ -64,6 +66,11 @@ set(MEDIA_COMPILER_FLAGS_COMMON
     -g
 )
 
+if(MEDIA_BUILD_HARDENING)
+    set(MEDIA_COMPILER_FLAGS_COMMON
+        ${MEDIA_COMPILER_FLAGS_COMMON}
+        -fstack-protector)
+endif()
 
 if(${UFO_MARCH} STREQUAL "slm")
     set(MEDIA_COMPILER_FLAGS_COMMON
@@ -119,9 +126,13 @@ if(${UFO_VARIANT} STREQUAL "default")
     set(MEDIA_COMPILER_FLAGS_RELEASE
         ${MEDIA_COMPILER_FLAGS_RELEASE}
         -O2
-        -D_FORTIFY_SOURCE=2
         -fno-omit-frame-pointer
     )
+    if(MEDIA_BUILD_HARDENING)
+        set(MEDIA_COMPILER_FLAGS_RELEASE
+            ${MEDIA_COMPILER_FLAGS_RELEASE}
+            -D_FORTIFY_SOURCE=2)
+    endif()
 endif()
 
 if(NOT ${PLATFORM} STREQUAL "android")
@@ -160,6 +171,11 @@ if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
          -Wno-missing-braces
          -Wno-overloaded-virtual
          -Wbitfield-constant-conversion
+         -Wno-extern-c-compat
+         -Wno-inconsistent-missing-override
+         # for verison under clang-17
+         -Wno-ignored-optimization-argument
+         -gdwarf-4
         )
     list(REMOVE_ITEM MEDIA_COMPILER_FLAGS_COMMON
          -funswitch-loops

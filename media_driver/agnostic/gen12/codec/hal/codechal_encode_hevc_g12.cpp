@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2017-2019, Intel Corporation
+* Copyright (c) 2017-2021, Intel Corporation
 *
 * Permission is hereby granted, free of charge, to any person obtaining a
 * copy of this software and associated documentation files (the "Software"),
@@ -39,7 +39,6 @@
 #include "mhw_vdbox_g12_X.h"
 #include "mhw_mi_g12_X.h"
 #include "mhw_render_g12_X.h"
-#include "media_user_settings_mgr_g12.h"
 #include "cm_queue_rt.h"
 #include "codechal_debug.h"
 
@@ -56,7 +55,7 @@ MOS_STATUS CodechalEncHevcStateG12::SetGpuCtxCreatOption()
 
     if (!MOS_VE_CTXBASEDSCHEDULING_SUPPORTED(m_osInterface))
     {
-        CodechalEncoderState::SetGpuCtxCreatOption();
+        CODECHAL_ENCODE_CHK_STATUS_RETURN(CodechalEncoderState::SetGpuCtxCreatOption());
     }
     else
     {
@@ -145,8 +144,40 @@ MOS_STATUS CodechalEncHevcStateG12::AddHcpSurfaceStateCmds(MOS_COMMAND_BUFFER *c
     CODECHAL_ENCODE_CHK_STATUS_RETURN(m_hcpInterface->AddHcpSurfaceCmd(cmdBuffer, &reconSurfaceParams));
 
     // Add the surface state for reference picture, GEN12 HW change
-    reconSurfaceParams.ucSurfaceStateId = CODECHAL_HCP_REF_SURFACE_ID;
-    CODECHAL_ENCODE_CHK_STATUS_RETURN(m_hcpInterface->AddHcpSurfaceCmd(cmdBuffer, &reconSurfaceParams));
+    MHW_VDBOX_SURFACE_PARAMS refSurfaceParams;
+    SetHcpRefSurfaceParams(refSurfaceParams);
+
+    if (m_mmcState->IsMmcEnabled())
+    {
+        refSurfaceParams.refsMmcEnable       = 0;
+        refSurfaceParams.refsMmcType         = 0;
+        refSurfaceParams.dwCompressionFormat = 0;
+
+        //add for B frame support
+        if (m_pictureCodingType != I_TYPE)
+        {
+            for (uint8_t i = 0; i < CODEC_MAX_NUM_REF_FRAME_HEVC; i++)
+            {
+                if (i < CODEC_MAX_NUM_REF_FRAME_HEVC &&
+                    m_picIdx[i].bValid && m_currUsedRefPic[i])
+                {
+                    uint8_t idx          = m_picIdx[i].ucPicIdx;
+                    uint8_t frameStoreId = m_refIdxMapping[i];
+
+                    MOS_MEMCOMP_STATE mmcState = MOS_MEMCOMP_DISABLED;
+                    ENCODE_CHK_STATUS_RETURN(m_mmcState->GetSurfaceMmcState(const_cast<PMOS_SURFACE>(&m_refList[idx]->sRefReconBuffer), &mmcState));
+                    refSurfaceParams.refsMmcEnable |= (mmcState == MOS_MEMCOMP_RC || mmcState == MOS_MEMCOMP_MC) ? (1 << frameStoreId) : 0;
+                    refSurfaceParams.refsMmcType |= (mmcState == MOS_MEMCOMP_RC) ? (1 << frameStoreId) : 0;
+                    if (mmcState == MOS_MEMCOMP_RC || mmcState == MOS_MEMCOMP_MC)
+                    {
+                        ENCODE_CHK_STATUS_RETURN(m_mmcState->GetSurfaceMmcFormat(const_cast<PMOS_SURFACE>(&m_refList[idx]->sRefReconBuffer), &refSurfaceParams.dwCompressionFormat));
+                    }
+                }
+            }
+        }
+    }
+
+    CODECHAL_ENCODE_CHK_STATUS_RETURN(m_hcpInterface->AddHcpSurfaceCmd(cmdBuffer, &refSurfaceParams));
 
     return eStatus;
 }
@@ -1909,6 +1940,7 @@ MOS_STATUS CodechalEncHevcStateG12::GetStatusReport(
 
     MOS_LOCK_PARAMS lockFlags;
     MOS_ZeroMemory(&lockFlags, sizeof(MOS_LOCK_PARAMS));
+    CODECHAL_ENCODE_CHK_NULL_RETURN(m_osInterface);
     HCPPakHWTileSizeRecord_G12 *tileStatusReport = (HCPPakHWTileSizeRecord_G12 *)m_osInterface->pfnLockResource(
         m_osInterface,
         &tileSizeStatusReport->sResource,
@@ -1956,6 +1988,7 @@ MOS_STATUS CodechalEncHevcStateG12::GetStatusReport(
         CODECHAL_ENCODE_CHK_STATUS_RETURN(CalculatePSNR(encodeStatus, encodeStatusReport));
     }
 
+    CODECHAL_ENCODE_CHK_COND_RETURN(totalCU == 0, "Invalid totalCU count");
     encodeStatusReport->QpY = encodeStatusReport->AverageQp =
         (uint8_t)((sumQp / (double)totalCU) / 4.0);  // due to TU is 4x4 and there are 4 TUs in one CU
 
@@ -2467,14 +2500,6 @@ MOS_STATUS CodechalEncHevcStateG12::ExecuteSliceLevel()
     {
         CODECHAL_ENCODE_CHK_STATUS_RETURN(EncTileLevel());
     }
-
-    /*
-    if ((m_useMdf) && (m_rawSurfaceToEnc))
-    {
-        m_osInterface->pfnWaitOnResource(m_osInterface,
-                                         &m_rawSurfaceToEnc->OsResource);
-    }
-    */
 
     return eStatus;
 }
@@ -3086,7 +3111,7 @@ MOS_STATUS CodechalEncHevcStateG12::Initialize(CodechalSetting *settings)
     userFeatureData.StringData.pStringData = stringData;
     statusKey                              = MOS_UserFeature_ReadValue_ID(
         nullptr,
-        __MEDIA_USER_FEATURE_VALUE_HEVC_ENCODE_LOAD_KERNEL_INPUT_ID_G12,
+        __MEDIA_USER_FEATURE_VALUE_HEVC_ENCODE_LOAD_KERNEL_INPUT_ID,
         &userFeatureData,
         m_osInterface->pOsContext);
 
@@ -3261,7 +3286,7 @@ MOS_STATUS CodechalEncHevcStateG12::Initialize(CodechalSetting *settings)
     MOS_ZeroMemory(&userFeatureData, sizeof(userFeatureData));
     statusKey = MOS_UserFeature_ReadValue_ID(
         nullptr,
-        __MEDIA_USER_FEATURE_VALUE_HEVC_VME_DISABLE_PANIC_MODE_ID_G12,
+        __MEDIA_USER_FEATURE_VALUE_HEVC_VME_DISABLE_PANIC_MODE_ID,
         &userFeatureData,
         m_osInterface->pOsContext);
     if (statusKey == MOS_STATUS_SUCCESS)
@@ -5838,6 +5863,8 @@ MOS_STATUS CodechalEncHevcStateG12::GenerateSkipFrameMbCodeSurface(SkipFrameInfo
     auto const maxNumCuInCtb    = (ctbSize / CODECHAL_HEVC_MIN_CU_SIZE) * (ctbSize / CODECHAL_HEVC_MIN_CU_SIZE);
     auto const picWidthInCtb    = MOS_ROUNDUP_DIVIDE(m_frameWidth, ctbSize);
     auto const picHeightInCtb   = MOS_ROUNDUP_DIVIDE(m_frameHeight, ctbSize);
+    CODECHAL_ENCODE_CHK_COND_RETURN(picWidthInCtb <= 0, "Invalid m_frameWidth");
+    CODECHAL_ENCODE_CHK_COND_RETURN(picHeightInCtb <= 0, "Invalid m_frameHeight");
     uint32_t   num_tile_columns = m_hevcPicParams->num_tile_columns_minus1 + 1;
     uint32_t * tileColumnsStartPosition{new uint32_t[num_tile_columns]{}};
 
@@ -7861,6 +7888,7 @@ CodechalEncHevcStateG12::CodechalEncHevcStateG12(
     MOS_ZeroMemory(&m_resBrcDataBuffer, sizeof(m_resBrcDataBuffer));
     MOS_ZeroMemory(&m_skipFrameInfo.m_resMbCodeSkipFrameSurface, sizeof(m_skipFrameInfo.m_resMbCodeSkipFrameSurface));
 
+    CODECHAL_ENCODE_CHK_NULL_NO_STATUS_RETURN(m_osInterface);
     m_hwInterface->GetStateHeapSettings()->dwNumSyncTags = CODECHAL_ENCODE_HEVC_NUM_SYNC_TAGS;
     m_hwInterface->GetStateHeapSettings()->dwDshSize     = CODECHAL_INIT_DSH_SIZE_HEVC_ENC;
 
@@ -7875,7 +7903,7 @@ CodechalEncHevcStateG12::CodechalEncHevcStateG12(
     m_hwInterface->GetStateHeapSettings()->dwIshSize +=
         MOS_ALIGN_CEIL(m_combinedKernelSize, (1 << MHW_KERNEL_OFFSET_SHIFT));
 
-    Mos_CheckVirtualEngineSupported(m_osInterface, false, true);
+    m_osInterface->pfnVirtualEngineSupported(m_osInterface, false, true);
 
     Mos_SetVirtualEngineSupported(m_osInterface, true);
 }
@@ -7935,7 +7963,7 @@ uint32_t CodechalEncHevcStateG12::CodecHalHevc_GetFileSize(char *fileName)
 {
     FILE *   fp       = nullptr;
     uint32_t fileSize = 0;
-    MOS_SecureFileOpen(&fp, fileName, "rb");
+    MosUtilities::MosSecureFileOpen(&fp, fileName, "rb");
     if (fp == nullptr)
     {
         return 0;
@@ -8001,7 +8029,7 @@ MOS_STATUS CodechalEncHevcStateG12::LoadSourceAndRef2xDSFromFile(
         CODECHAL_ENCODE_CHK_NULL_RETURN(data);
 
         FILE *Ref2xDS = nullptr;
-        eStatus       = MOS_SecureFileOpen(&Ref2xDS, pathOfRef2xDSCmd, "rb");
+        eStatus       = MosUtilities::MosSecureFileOpen(&Ref2xDS, pathOfRef2xDSCmd, "rb");
         if (Ref2xDS == nullptr)
         {
             m_osInterface->pfnUnlockResource(m_osInterface, &pRef2xSurface->OsResource);
@@ -8035,7 +8063,7 @@ MOS_STATUS CodechalEncHevcStateG12::LoadSourceAndRef2xDSFromFile(
         CODECHAL_ENCODE_CHK_NULL_RETURN(data);
 
         FILE *Src2xDS = nullptr;
-        eStatus       = MOS_SecureFileOpen(&Src2xDS, pathOfSrc2xDSCmd, "rb");
+        eStatus       = MosUtilities::MosSecureFileOpen(&Src2xDS, pathOfSrc2xDSCmd, "rb");
         if (Src2xDS == nullptr)
         {
             m_osInterface->pfnUnlockResource(m_osInterface, &pSrc2xSurface->OsResource);
@@ -8100,7 +8128,7 @@ MOS_STATUS CodechalEncHevcStateG12::LoadPakCommandAndCuRecordFromFile()
     CODECHAL_ENCODE_CHK_NULL_RETURN(data);
 
     FILE *pakObj = nullptr;
-    eStatus      = MOS_SecureFileOpen(&pakObj, pathOfPakCmd, "rb");
+    eStatus      = MosUtilities::MosSecureFileOpen(&pakObj, pathOfPakCmd, "rb");
     if (pakObj == nullptr)
     {
         m_osInterface->pfnUnlockResource(m_osInterface, &m_resMbCodeSurface);
@@ -8118,7 +8146,7 @@ MOS_STATUS CodechalEncHevcStateG12::LoadPakCommandAndCuRecordFromFile()
 
     uint8_t *record  = data + m_mvOffset;
     FILE *   fRecord = nullptr;
-    eStatus          = MOS_SecureFileOpen(&fRecord, pathOfCuRecord, "rb");
+    eStatus          = MosUtilities::MosSecureFileOpen(&fRecord, pathOfCuRecord, "rb");
     if (fRecord == nullptr)
     {
         m_osInterface->pfnUnlockResource(m_osInterface, &m_resMbCodeSurface);
@@ -8146,10 +8174,15 @@ MOS_STATUS CodechalEncHevcStateG12::LoadPakCommandAndCuRecordFromFile()
             m_pakOnlyDataFolder,
             m_frameNum);
 
-        uint32_t sizePicState = CodecHalHevc_GetFileSize(pathOfPicState);
-        if (sizePicState == 0)
+        int32_t tmpSizePicState = CodecHalHevc_GetFileSize(pathOfPicState);
+        uint32_t sizePicState   = 0;
+        if (tmpSizePicState <= 0)
         {
             return MOS_STATUS_INVALID_FILE_SIZE;
+        }
+        else
+        {
+            sizePicState = static_cast<uint32_t>(tmpSizePicState);
         }
 
         data = (uint8_t *)m_osInterface->pfnLockResource(
@@ -8157,7 +8190,7 @@ MOS_STATUS CodechalEncHevcStateG12::LoadPakCommandAndCuRecordFromFile()
         CODECHAL_ENCODE_CHK_NULL_RETURN(data);
 
         FILE *fPicState = nullptr;
-        eStatus         = MOS_SecureFileOpen(&fPicState, pathOfPicState, "rb");
+        eStatus         = MosUtilities::MosSecureFileOpen(&fPicState, pathOfPicState, "rb");
         if (fPicState == nullptr)
         {
             m_osInterface->pfnUnlockResource(m_osInterface, &m_brcBuffers.resBrcImageStatesWriteBuffer[m_currRecycledBufIdx]);
@@ -8763,7 +8796,7 @@ MOS_STATUS CodechalEncHevcStateG12::UserFeatureKeyReport()
     CODECHAL_ENCODE_CHK_STATUS_RETURN(CodechalEncHevcState::UserFeatureKeyReport());
 #if (_DEBUG || _RELEASE_INTERNAL)
     CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_HEVC_ENCODE_REGION_NUMBER_ID, m_numberConcurrentGroup, m_osInterface->pOsContext);
-    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_HEVC_ENCODE_SUBTHREAD_NUM_ID_G12, m_numberEncKernelSubThread, m_osInterface->pOsContext);
+    CodecHalEncode_WriteKey(__MEDIA_USER_FEATURE_VALUE_HEVC_ENCODE_SUBTHREAD_NUM_ID, m_numberEncKernelSubThread, m_osInterface->pOsContext);
     CodecHalEncode_WriteKey64(__MEDIA_USER_FEATURE_VALUE_HEVC_ENCODE_ENABLE_VE_DEBUG_OVERRIDE, m_kmdVeOveride.Value, m_osInterface->pOsContext);
 
     if (m_pakOnlyTest)
@@ -8945,7 +8978,7 @@ void CodechalEncHevcStateG12::SetDependency(
 void CodechalEncHevcStateG12::InitSWScoreboard(uint8_t *scoreboard, uint32_t scoreboardWidth, uint32_t scoreboardHeight, uint32_t dependencyPattern, char childThreadNumber)
 {
     // 1. Select Dependency Pattern
-    uint8_t numDependencies;
+    uint8_t numDependencies = 0;
     char    scoreboardDeltaX[m_maxNumDependency];
     char    scoreboardDeltaY[m_maxNumDependency];
     memset(scoreboardDeltaX, 0, sizeof(scoreboardDeltaX));
@@ -9595,7 +9628,7 @@ MOS_STATUS CodechalEncHevcStateG12::InitMmcState()
 //        WRITE_CURBE_FIELD_TO_FILE(MaxThreadWidth);
 //        WRITE_CURBE_FIELD_TO_FILE(MaxThreadHeight);
 //
-//        CODECHAL_DEBUG_CHK_STATUS(MOS_WriteFileFromPtr(
+//        CODECHAL_DEBUG_CHK_STATUS(MosUtilities::MosWriteFileFromPtr(
 //            pDebugInterface->sPath,
 //            FileParams.psWriteToFile,
 //            FileParams.dwOffset));
@@ -9789,7 +9822,7 @@ MOS_STATUS CodechalEncHevcStateG12::ReturnCommandBuffer(PMOS_COMMAND_BUFFER cmdB
 
 MOS_STATUS CodechalEncHevcStateG12::SubmitCommandBuffer(
     PMOS_COMMAND_BUFFER cmdBuffer,
-    bool                nullRendering)
+    bool                bNullRendering)
 {
     MOS_STATUS eStatus = MOS_STATUS_SUCCESS;
 
@@ -9805,7 +9838,7 @@ MOS_STATUS CodechalEncHevcStateG12::SubmitCommandBuffer(
             CODECHAL_ENCODE_CHK_STATUS_RETURN(SetAndPopulateVEHintParams(cmdBuffer));
         }
 
-        CODECHAL_ENCODE_CHK_STATUS_RETURN(m_osInterface->pfnSubmitCommandBuffer(m_osInterface, cmdBuffer, nullRendering));
+        CODECHAL_ENCODE_CHK_STATUS_RETURN(m_osInterface->pfnSubmitCommandBuffer(m_osInterface, cmdBuffer, bNullRendering));
         return eStatus;
     }
 
@@ -9847,7 +9880,7 @@ MOS_STATUS CodechalEncHevcStateG12::SubmitCommandBuffer(
     if (eStatus == MOS_STATUS_SUCCESS)
     {
         CODECHAL_ENCODE_CHK_STATUS_RETURN(SetAndPopulateVEHintParams(&m_realCmdBuffer));
-        CODECHAL_ENCODE_CHK_STATUS_RETURN(m_osInterface->pfnSubmitCommandBuffer(m_osInterface, &m_realCmdBuffer, nullRendering));
+        CODECHAL_ENCODE_CHK_STATUS_RETURN(m_osInterface->pfnSubmitCommandBuffer(m_osInterface, &m_realCmdBuffer, bNullRendering));
     }
 
     return eStatus;
